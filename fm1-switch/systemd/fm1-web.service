@@ -1,0 +1,28 @@
+# A *user* unit: %h is the user's home, so this file needs no editing when the clone is at ~/fm1.
+# Other places: use `systemctl --user edit fm1-web`. Unit count and paths: ~/.config/fm1/config.json (README).
+[Unit]
+Description=FM-1 fleet web UI
+Documentation=https://thefirmwarehub.com/
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fm1/fm1-switch
+ExecStart=%h/fm1/fm1-switch/.venv/bin/fm1-switch web --host 127.0.0.1 --port 8080
+# Loopback, explicitly (audit SEC-02): the kiosk (fm1-kiosk.service) reaches this on the
+# Pi itself. Binding beyond loopback is an operator opt-in (--host 0.0.0.0) and then
+# requires the X-FM1-Token the server prints at startup for writes from other machines.
+Restart=on-failure
+RestartSec=5
+# Fresh state files (flash log, registry, whole-flash backups) are owner-only: the log
+# names units and the backups ARE their contents (audit SEC-05; web._harden_umask does
+# the same for non-systemd starts).
+UMask=0077
+
+# This runs as the normal user, not root: a write can never escalate. The FM-1 is
+# reachable through the udev rule that grants the operator group; no extra privilege
+# is needed, so none is granted. Sandboxing is left light here because the stricter
+# options (ProtectSystem=strict, ProtectHome) make a *user* unit fail to start with
+# status=226/NAMESPACE against its own home directory.
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,108 @@
+# udev rules for the M-VAVE FM-1 fleet (firmware swapping only).
+#
+# (Moved here from fleetctl/udev/ when that package was retired: it is the one rules file
+# fm1-switch's setup.sh installs, for the port symlinks the fleet screen still reads on a
+# mapped bench and the download-mode permissions m-flasher needs.)
+#
+# SCOPE: this tool flashes, backs up and restores FM-1s. It does NOT host MIDI on the
+# units -- playing and MIDI routing happen over each unit's TRS MIDI OUT into the CME
+# H4MIDI WC, entirely separate from this USB-C link (see docs/FM1-fleet-controller-design.md).
+#
+# WHY
+# ---
+# In download mode an FM-1 presents as USB mass storage "WL82 UBOOT1.00"
+# (VID 0x4C4A / PID 0x8057) reached through SCSI generic. /dev/sgN RENUMBERS on every
+# replug, so "flash the second one" is meaningless without a stable binding.
+#
+# We bind by PHYSICAL USB PORT PATH, which stays fixed as long as the unit stays in the
+# same hub port, and give each a friendly symlink (fm1-a ... fm1-d).
+#
+# THE TOPOLOGY THESE PATHS DESCRIBE  (measured 2026-11-21 on the real bench)
+# -------------------------------------------------------------------------
+#   usb1 (dwc_otg, one root port)
+#     +-- 1-1        SMSC 0424:2514, 4 downstream ports    <- OUTER hub
+#           +-- 1-1.1  SMSC 0424:2514, 3 downstream ports  <- INNER hub
+#           |     +-- 1-1.1.1  SMSC 0424:7800 (LAN7800)    -- the Pi's OWN ethernet
+#           |     +-- 1-1.1.2  FM-1 unit
+#           |     +-- 1-1.1.3  FM-1 unit
+#           +-- 1-1.2        FM-1 unit
+#           +-- 1-1.3        FM-1 unit
+#           +-- 1-1.4        (free)
+#
+# There are FOUR usable unit ports and they are NOT adjacent in the numbering:
+# 1-1.1.2 and 1-1.1.3 sit on the inner hub, 1-1.2 and 1-1.3 on the outer one.
+#
+# >>> DO NOT "tidy" these into 1-1.1.2/1-1.1.3/1-1.4/1-1.5, or any other contiguous run. <<<
+# > 1-1.1.1 is the LAN7800 ethernet chip on this very board. It never appears as an FM-1
+# > today (it does not match the vendor filter below), but binding a slot to it would make
+# > the Pi's own NIC a candidate for "slot A" the moment any matching rule changes. The
+# > only safe port list is the measured one above.
+#
+# WHY THE HUB MODEL IS MATCHED, NOT JUST THE PORT NUMBER
+# ------------------------------------------------------
+# KERNELS=="1-1.3" names a position on whatever hub happens to be plugged into usb1. If
+# that hub is ever swapped -- or Pi firmware renumbers it -- then a DIFFERENT physical
+# jack silently inherits the name "fm1-b", and the next write lands on the wrong unit.
+# Pinning ATTRS{idVendor}/idProduct/bcdDevice of BOTH hub levels means the rule matches
+# only in the topology that was actually measured. A hub swap then produces absent slots
+# (safe: writes are refused) instead of wrongly-named slots (unsafe: wrong unit written).
+#
+# To re-measure after a hub change:
+#     lsusb -t
+#     udevadm info -a -p /sys/bus/usb/devices/1-1.1.2     # read parent chain
+#
+# IMPORTANT: a unit is only matched here while it is IN DOWNLOAD MODE. When it is running
+# normal firmware it is a MIDI/audio device and these symlinks simply do not exist. That
+# is expected: `fm1-switch units` shows the unit as absent until it is put into download
+# mode (m-flasher download-mode, or a power-cycle that drops it to ROM boot).
+
+# ---------------------------------------------------------------------------
+# Download mode (SCSI generic) -> /dev/fm1-<letter>
+# ---------------------------------------------------------------------------
+
+# Inner hub (1-1.1): ports 1-1.1.2 and 1-1.1.3
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.1.2", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-a"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.1.2", ATTRS{idVendor}=="1209", SYMLINK+="fm1-a"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.1.3", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-b"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.1.3", ATTRS{idVendor}=="1209", SYMLINK+="fm1-b"
+
+# Outer hub (1-1): ports 1-1.2 and 1-1.3
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.2", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-c"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.2", ATTRS{idVendor}=="1209", SYMLINK+="fm1-c"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.3", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-d"
+SUBSYSTEM=="scsi_generic", KERNELS=="1-1.3", ATTRS{idVendor}=="1209", SYMLINK+="fm1-d"
+
+# The mass-storage block device for the same ports, so a stale mount or a desktop
+# "unreadable disk" prompt can be traced back to a specific unit.
+SUBSYSTEM=="block", KERNELS=="1-1.1.2", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-a-disk"
+SUBSYSTEM=="block", KERNELS=="1-1.1.3", ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-b-disk"
+SUBSYSTEM=="block", KERNELS=="1-1.2",   ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-c-disk"
+SUBSYSTEM=="block", KERNELS=="1-1.3",   ATTRS{idVendor}=="4c4a", SYMLINK+="fm1-d-disk"
+
+# ---------------------------------------------------------------------------
+# Permissions: let the operator user reach the unit without root.
+# (m-flasher's own package installs an equivalent rule; this is belt-and-braces for the
+# symlinks above.) Both the stock vendor id and the pid.codes id that Felucca-family
+# firmwares use are granted, so a unit is reachable whichever firmware it is running.
+# ---------------------------------------------------------------------------
+SUBSYSTEM=="scsi_generic", ATTRS{idVendor}=="4c4a", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb",          ATTRS{idVendor}=="4c4a", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb",          ATTRS{idVendor}=="1209", MODE="0660", GROUP="plugdev"
+
+# ---------------------------------------------------------------------------
+# PORT MAP  (confirmed 2026-11-21, all four units connected and powered)
+#
+#   slot    hub port path   unit unique id       flash chip    physical label
+#   fm1-a   1-1.1.2         ________________     0x______      ______________
+#   fm1-b   1-1.1.3         ________________     0x______      ______________
+#   fm1-c   1-1.2           ________________     0x______      ______________
+#   fm1-d   1-1.3           ________________     0x______      ______________
+#
+# Populate the right-hand columns by backing each unit up once in download mode:
+#     m-flasher info    --device /dev/fm1-a     # gives unit id + flash chip
+# then confirm the recorded id matches the sticker on the unit.
+#
+# NOTE: the port path identifies the JACK, not the unit. Units are meant to stay in
+# fixed ports, so the two are the same thing in practice -- but the binding is only
+# as good as the cabling. The sticker is the ground truth.
+# ---------------------------------------------------------------------------

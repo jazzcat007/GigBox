@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fm1-switch"
+version = "0.1.0"
+description = "Touchscreen firmware switcher for a fleet of M-VAVE FM-1 synths on a Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "YOUR-NAME" }]  # edit before publishing
+keywords = ["m-vave", "fm-1", "firmware", "raspberry-pi", "synthesizer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: System :: Hardware",
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+fm1-switch = "fm1_switch.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fm1_switch*"]
+
+# The web UI is plain files shipped inside the package. Without this they are absent
+# from an installed copy and every page 404s.
+[tool.setuptools.package-data]
+fm1_switch = ["web/*.html", "web/*.css", "web/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

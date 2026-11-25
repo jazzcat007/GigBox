@@ -1,0 +1,7 @@
+# captured 2026-11-25 on FM-Pi: output of `fm1-switch download fm1-d` (soft key to port 1-1.3), unedited; the last line is the exit code
+fm1-d is on USB port 1-1.3; sending the soft key…
+  wrote the soft key to /dev/snd/midiC0D0
+  ✔ fm1-d is in download mode (1-1.3 now reports 4c4a:8057)
+  note: the soft key may reach other MIDI-capable units too — re-read them rather than assuming
+  ⚠ no /dev/fm1-d yet — check `udevadm info -q path -n /dev/sg0` against the rule in fm1-switch/udev/80-fm1.rules
+exit=0

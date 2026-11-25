@@ -1,0 +1,461 @@
+"""The Firmware Hub catalogue: the community's curated list of FM-1 firmwares.
+
+Source: https://thefirmwarehub.com/catalog.json — 277 firmwares as of 2026-11-20,
+each with identity, version, SHA-256, size and a chip-compatibility flag.
+
+**This module is a client, not a mirror.** The hub publishes a machine-readable
+catalogue explicitly for apps like this one, under terms we are obliged to honour
+(https://thefirmwarehub.com/kb/#catalog):
+
+1. Name The Firmware Hub with its address, visibly. See ATTRIBUTION below — it is
+   rendered in the UI, not just buried here.
+2. The makers' texts and pictures are theirs; name each firmware's author and
+   link its repository. We show author + repo on every card.
+3. **Read ``catalog.json`` at most once a day**, with a User-Agent naming us. Do not
+   scrape the pages. Download packages from the makers' releases.
+4. Keep the player safe: install only when the SHA-256 matches the catalogue, drop
+   entries that have left it.
+
+On the last point this module deliberately goes *further* than the hub asks: it never
+downloads a package automatically. It resolves a URL and a checksum; the write happens
+only after the user has asked for it and the hash has been re-checked. See fetch_package.
+
+**Chip flag — read this before using ``chip`` for anything.**
+
+The catalogue's ``chip`` field is ``new`` / ``old`` / ``any``. It is NOT what it looks
+like. ``new`` does not mean "requires the newer flash chip"; it means **"knows the newer
+chip"**, i.e. it is one of the firmwares that saves correctly on a UC25HQ80 unit. The
+evidence, from the hub's own rescue page ("Firmwares that save on the newer chip"):
+
+* Felucca 1.8.2, SLOOP 2.8.5 and OberVave 3.5.2 are all flagged ``new``,
+* and all three run on this fleet's old-chip (0x856014) units.
+
+So ``old`` means "does not know the new chip", not "will not run on an old one".
+Consequently:
+
+* on an **old-chip** unit, every firmware is fine — the flag is irrelevant;
+* on a **new-chip** unit, an ``old`` firmware will not write the flash, so settings and
+  saves are lost at power-off, and updates may be refused.
+
+This module exposes that as :attr:`Entry.chip_note` rather than a boolean, so callers
+cannot accidentally treat it as a hard gate. STALE_CAVEAT records the one thing we have
+not verified: whether a new-chip firmware's fix survives being overwritten by an old-chip
+firmware (m-flasher merges rather than replaces, so we believe it does, but our fleet has
+only one new-chip unit and it is working — we are not going to break it to find out).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+HUB_BASE = "https://thefirmwarehub.com"
+CATALOG_URL = f"{HUB_BASE}/catalog.json"
+
+#: Required by the hub's terms: they ask tools to identify themselves.
+USER_AGENT = "fm1-fleet/0.1 (Raspberry Pi FM-1 firmware manager; personal use)"
+
+#: The hub asks that the catalogue be read at most once a day.
+MAX_AGE_SECONDS = 24 * 60 * 60
+
+#: A forced refresh is honoured only when the cache is at least this old (HUB-02), so a
+#: client looping the refresh button cannot hammer the hub.
+FORCE_MIN_AGE_SECONDS = 60 * 60
+
+ATTRIBUTION = (
+    "Firmware list: The Firmware Hub – https://thefirmwarehub.com. "
+    "Compilation licensed CC BY 4.0; card texts and pictures belong to their makers."
+)
+
+STALE_CAVEAT = (
+    "Not verified: whether a newer-chip firmware's flash support survives being "
+    "overwritten by an older-chip one. m-flasher merges a package into flash rather "
+    "than replacing it, so it probably does — but test on one unit before relying on it."
+)
+
+KINDS = ("synth", "groove", "drums", "chords", "tracker", "other", "dev")
+KIND_LABELS = {
+    "synth": "Synth",
+    "groove": "Groovebox",
+    "drums": "Drums / sampler",
+    "chords": "Chords",
+    "tracker": "Tracker",
+    "other": "Other",
+    "dev": "Dev tool",
+}
+
+
+def cache_dir() -> Path:
+    """Where the catalogue is cached between runs."""
+    raw = os.environ.get("FM1_HUB_CACHE")
+    if raw:
+        return Path(raw).expanduser()
+    return Path("~/fm1-hub").expanduser()
+
+
+def catalog_path() -> Path:
+    return cache_dir() / "catalog.json"
+
+
+class HubError(Exception):
+    """The catalogue could not be read at all."""
+
+
+class HubUnavailable(HubError):
+    """No network, and no usable cached catalogue."""
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One firmware in the catalogue. Field names mirror the JSON, mostly."""
+
+    id: str
+    name: str
+    version: str
+    author: str
+    repo: str
+    ident: str
+    what: str
+    sha256: str
+    size: int
+    #: "new" | "old" | "any" — means "knows the new chip", see the module docstring.
+    chip: str
+    kind: tuple[str, ...] = ()
+    beta: bool = False
+    pkg: str | None = None
+    date: str | None = None
+    stars: int = 0
+    #: Set when the hub considers the package installable by a USB installer;
+    #: when true, ``pkg`` may be absent and there is nothing for us to flash.
+    external_install: bool = False
+    link_only: bool = False
+    editor: str | None = None
+    site: str | None = None
+    release: str | None = None
+    hid_keyboard: bool = False
+
+    @property
+    def package_url(self) -> str | None:
+        """Absolute URL of the package, or None if the hub does not mirror one."""
+        if not self.pkg:
+            return None
+        return f"{HUB_BASE}/{self.pkg.lstrip('/')}"
+
+    @property
+    def installable_by_us(self) -> bool:
+        """Can this GUI fetch and flash it, or does it need its maker's installer?"""
+        return bool(self.pkg) and not self.external_install and not self.link_only
+
+    @property
+    def kind_label(self) -> str:
+        return " + ".join(KIND_LABELS.get(k, k.title()) for k in self.kind)
+
+    def ident_matches(self, reported: str | None) -> bool:
+        """Does a unit's reported identity fall inside this entry's pattern?
+
+        The catalogue's ``ident`` is a REGEX (e.g. ``FM-1_95[3-9]\\d``), because some
+        firmwares vary their last digits per version. Several firmwares share an
+        identity, so a match is evidence, never proof of which one is installed.
+        """
+        if not reported:
+            return False
+        try:
+            return re.fullmatch(self.ident, reported) is not None
+        except re.error:
+            return reported == self.ident
+
+    def chip_note(self, unit_chip: str | None) -> tuple[str, str]:
+        """(severity, text) describing chip compatibility for one unit.
+
+        severity is "ok" | "warn" | "unknown". Never a boolean: an "ok" here does not
+        mean installing is advisable, only that the chip is not the reason to hesitate.
+        """
+        chip = (unit_chip or "").upper()
+        if not unit_chip:
+            return ("unknown", "Chip not known — connect the unit to check.")
+        if chip.endswith("B36014"):
+            if self.chip == "new":
+                return ("ok", "Knows this unit's newer flash chip.")
+            if self.chip == "any":
+                return ("ok", "Works with either flash chip.")
+            return (
+                "warn",
+                "Does not know this unit's newer flash chip: settings and saves will "
+                "not be kept across power-off, and updates may be refused.",
+            )
+        if chip.endswith("856014"):
+            return ("ok", "Older flash chip — every firmware can write it.")
+        return ("unknown", f"Unrecognised flash chip {unit_chip}.")
+
+
+@dataclass
+class Catalog:
+    entries: list[Entry] = field(default_factory=list)
+    updated: str = ""
+    fetched_at: float = 0.0
+    #: True when this came from the on-disk cache rather than the network.
+    from_cache: bool = False
+
+    @property
+    def age_seconds(self) -> float:
+        return max(0.0, time.time() - self.fetched_at) if self.fetched_at else 0.0
+
+    @property
+    def stale(self) -> bool:
+        return self.age_seconds > MAX_AGE_SECONDS
+
+    def by_id(self, entry_id: str) -> Entry | None:
+        for e in self.entries:
+            if e.id == entry_id:
+                return e
+        return None
+
+    def matching_ident(self, reported: str | None) -> list[Entry]:
+        """Entries whose identity pattern could be what this unit is running."""
+        return [e for e in self.entries if e.ident_matches(reported)]
+
+    def search(self, query: str = "", kind: str | None = None) -> list[Entry]:
+        """Case-insensitive substring search over name, author and description."""
+        q = (query or "").strip().lower()
+        out = self.entries
+        if kind:
+            out = [e for e in out if kind in e.kind]
+        if q:
+            out = [
+                e
+                for e in out
+                if q in e.name.lower()
+                or q in e.author.lower()
+                or q in e.what.lower()
+                or q in e.id.lower()
+            ]
+        return out
+
+
+def _kind_tuple(raw) -> tuple[str, ...]:
+    if isinstance(raw, list):
+        return tuple(str(k) for k in raw if k)
+    if raw:
+        return (str(raw),)
+    return ()
+
+
+def parse_catalog(payload: dict, *, fetched_at: float | None = None) -> Catalog:
+    """Build a :class:`Catalog` from the hub's JSON, skipping unusable rows.
+
+    Rows without a package, or without a checksum, are kept (they are still useful to
+    browse and link to) but will report ``installable_by_us`` as False.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("firmwares"), list):
+        raise HubError("catalogue is not the shape we expect (no 'firmwares' list)")
+
+    entries: list[Entry] = []
+    for row in payload["firmwares"]:
+        if not isinstance(row, dict):
+            continue
+        try:
+            eid = str(row["id"])
+            name = str(row.get("name") or eid)
+        except (KeyError, TypeError):
+            continue
+        hid = row.get("hid") or {}
+        entries.append(
+            Entry(
+                id=eid,
+                name=name,
+                version=str(row.get("version") or ""),
+                author=str(row.get("author") or ""),
+                repo=str(row.get("repo") or ""),
+                ident=str(row.get("ident") or ""),
+                what=str(row.get("what") or ""),
+                sha256=str(row.get("sha256") or ""),
+                size=int(row.get("size") or 0),
+                chip=str(row.get("chip") or "any"),
+                kind=_kind_tuple(row.get("kind")),
+                beta=bool(row.get("beta")),
+                pkg=row.get("pkg") or None,
+                date=row.get("date"),
+                stars=int(row.get("stars") or 0),
+                external_install=bool(row.get("externalInstall")),
+                link_only=bool(row.get("linkOnly")),
+                editor=row.get("editor") or None,
+                site=row.get("site") or None,
+                release=row.get("release") or None,
+                hid_keyboard=bool(isinstance(hid, dict) and hid.get("keyboard")),
+            )
+        )
+    return Catalog(
+        entries=entries,
+        updated=str(payload.get("updated") or ""),
+        fetched_at=fetched_at if fetched_at is not None else time.time(),
+    )
+
+
+def load(*, network: bool = True, force: bool = False, timeout: float = 60.0) -> Catalog:
+    """Return the catalogue, from cache when fresh, else from the hub.
+
+    ``network=False`` never touches the network (offline mode, and tests).
+    Raises :class:`HubUnavailable` only when there is neither network nor cache.
+    """
+    cache = catalog_path()
+    cached: Catalog | None = None
+
+    if cache.is_file():
+        try:
+            payload = json.loads(cache.read_text(encoding="utf-8"))
+            cached = parse_catalog(payload, fetched_at=cache.stat().st_mtime)
+            cached.from_cache = True
+        except (OSError, ValueError, HubError):
+            cached = None
+
+    if force and cached is not None and cached.entries and cached.age_seconds < FORCE_MIN_AGE_SECONDS:
+        force = False
+    if cached is not None and cached.entries and not force and not cached.stale:
+        return cached
+    if not network:
+        if cached is not None and cached.entries:
+            return cached
+        raise HubUnavailable(
+            "No cached catalogue and network access is disabled. "
+            "Connect to Wi-Fi and refresh, or run `fm1-hub --refresh`."
+        )
+
+    try:
+        req = urllib.request.Request(
+            CATALOG_URL, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed URL
+            raw = resp.read()
+        payload = json.loads(raw)
+        fresh = parse_catalog(payload)
+    except (urllib.error.URLError, OSError, ValueError, HubError) as exc:
+        if cached is not None and cached.entries:
+            # Serving yesterday's list is better than an empty screen, as long as the
+            # UI says so — which it does, from Catalog.stale and from_cache.
+            return cached
+        raise HubUnavailable(f"Could not read the catalogue: {exc}") from exc
+
+    # Write atomically: a power cut mid-write must not leave a truncated catalogue
+    # that refuses to load next boot.
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(cache)
+    except OSError:
+        pass  # read-only filesystem is not a reason to fail the refresh
+
+    return fresh
+
+
+# ------------------------------------------------------------------- fetching packages
+#
+# A package is a firmware image. Downloading one is the one place this program trusts
+# the network, so the rules are stated once, here:
+#
+#   * never fetch without an explicit call (the UI asks first, and says so);
+#   * verify SHA-256 against the catalogue *before* the file enters the library —
+#     a mismatch deletes the download and raises, it does not "keep it anyway";
+#   * verify size too, because a truncated body that happens to hash-verify is
+#     impossible but a truncated body that never finished is common;
+#   * write via a temp file and rename, so a killed download cannot leave a
+#     half-written .fwsc where the library scan will pick it up.
+
+MAX_PACKAGE_BYTES = 4 * 1024 * 1024  # generous: the largest catalogue entry is ~1 MiB
+
+
+class PackageDownloadError(HubError):
+    """The package could not be fetched or did not match the catalogue."""
+
+
+class ChecksumMismatch(PackageDownloadError):
+    """The bytes on the wire are not the bytes the catalogue promised."""
+
+    def __init__(self, expected: str, actual: str) -> None:
+        super().__init__(
+            f"checksum mismatch: catalogue says {expected[:16]}…, "
+            f"downloaded file is {actual[:16]}…. The file was deleted and NOT installed."
+        )
+        self.expected = expected
+        self.actual = actual
+
+
+def fetch_package(
+    entry: Entry,
+    dest_dir: Path,
+    *,
+    timeout: float = 180.0,
+    allow_unpinned: bool = False,
+) -> Path:
+    """Download one catalogue entry into ``dest_dir`` and verify it.
+
+    Returns the written path. Raises :class:`PackageDownloadError` on any problem,
+    and in that case leaves nothing behind.
+    """
+    if not entry.installable_by_us:
+        raise PackageDownloadError(
+            f"{entry.name} is not distributed as a downloadable package "
+            "(its maker's installer is required)."
+        )
+    url = entry.package_url
+    if not url:
+        raise PackageDownloadError(f"{entry.name} has no package URL in the catalogue.")
+    if not entry.sha256 and not allow_unpinned:
+        raise PackageDownloadError(
+            f"{entry.name} has no checksum in the catalogue; refusing to install an "
+            "unverifiable file (pass allow_unpinned to override)."
+        )
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    filename = entry.pkg.rsplit("/", 1)[-1] if entry.pkg else f"{entry.id}.fwsc"
+    if not filename.lower().endswith(".fwsc"):
+        filename += ".fwsc"
+    dest = dest_dir / filename
+    tmp = dest.with_name(dest.name + ".part")
+
+    digest = hashlib.sha256()
+    written = 0
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            declared = resp.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > MAX_PACKAGE_BYTES:
+                raise PackageDownloadError(
+                    f"refusing {int(declared)} bytes — larger than any FM-1 package"
+                )
+            with tmp.open("wb") as fh:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_PACKAGE_BYTES:
+                        raise PackageDownloadError("download exceeded the size limit")
+                    digest.update(chunk)
+                    fh.write(chunk)
+    except (urllib.error.URLError, OSError) as exc:
+        tmp.unlink(missing_ok=True)
+        raise PackageDownloadError(f"download failed: {exc}") from exc
+    except PackageDownloadError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    actual = digest.hexdigest()
+    problems: list[str] = []
+    if entry.sha256 and actual != entry.sha256.lower():
+        problems.append("sha256")
+    if entry.size and written != entry.size:
+        problems.append(f"size {written} != {entry.size}")
+    if problems:
+        tmp.unlink(missing_ok=True)
+        raise ChecksumMismatch(entry.sha256, actual)
+
+    tmp.replace(dest)
+    return dest

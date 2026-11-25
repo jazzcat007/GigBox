@@ -1,0 +1,42 @@
+# No hardware, no m-flasher, no network: the suites use fakes. The two tests that need real
+# firmware packages skip because fm1-switch/realtest/ is not in the repository.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+        package: ["fm1-switch"]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . pytest
+      - run: python -m pytest -q -rs
+
+  js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fm1-switch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --test tests/js/fleet.test.mjs

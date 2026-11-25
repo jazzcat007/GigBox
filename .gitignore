@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.shot/
+.DS_Store
+
+# The owner's unit flash dumps, factory images and sealed bundles. Not redistributable
+# (vendor firmware, third-party dumps) and identifying (factory unit ids). Kept on disk only.
+archives/
+backups/
+
+# Real firmware packages for the parser tests: third-party binaries with mostly unstated
+# redistribution terms. Fetch them with fm1-switch/tools/fetch-realtest.sh; the two tests
+# that need them skip when they are absent.
+fm1-switch/realtest/*
+!fm1-switch/realtest/README.md
+
+# Bench-private notes (LAN details, usernames, unit ids, SSH commands).
+docs/private/
+AUDIT-PROMPT.md
+
+node_modules/

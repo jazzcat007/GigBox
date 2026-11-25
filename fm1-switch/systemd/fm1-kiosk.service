@@ -1,0 +1,40 @@
+# edit after copying - user, group and home paths are placeholders; see README, Install step 4 ("Services")
+[Unit]
+Description=FM-1 fleet manager kiosk on the panel
+Documentation=https://thefirmwarehub.com/
+
+# Shows the web UI (fm1-web, a *user* service on port 8080) fullscreen on the panel.
+After=systemd-user-sessions.service
+Wants=network-online.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/YOUR-USER/fm1/fm1-switch
+
+# Wait for the web server, rather than racing it. cog shows its own error page and stays
+# there, so losing the race would look like a permanently broken panel.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 90); do curl -sf -o /dev/null http://127.0.0.1:8080/fleet && exit 0; sleep 1; done; exit 1'
+
+# cog is WPE WebKit's kiosk shell: it renders straight to the display through KMS/EGL and
+# reads touch through libinput, with no X server and no desktop.
+#
+# Chromium was the obvious first choice and it does not work here: the Raspberry Pi build
+# reports "Invalid ozone platform: drm" and links X11 only, so it would need Xvfb plus
+# something to copy the virtual framebuffer onto the panel. cog is built for this.
+Environment=COG_PLATFORM_DRM=1
+Environment=COG_PLATFORM_DRM_CARD=/dev/dri/card0
+# Keep the cursor off the screen and disable screen blanking: this is an appliance.
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+
+# That user must be in the video and render groups, so it can open the DRM device without root.
+User=YOUR-USER
+Group=YOUR-USER
+
+ExecStart=/usr/bin/cog --platform=drm http://127.0.0.1:8080/fleet
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

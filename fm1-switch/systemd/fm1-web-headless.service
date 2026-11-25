@@ -1,0 +1,25 @@
+# Headless: no panel, no kiosk. Serves the same /fleet UI on port 80 to any phone, tablet or
+# laptop on the LAN, so a Pi Zero 2 W (or any small board) with the units on USB is a complete
+# flasher. A *system* unit (port 80 needs CAP_NET_BIND_SERVICE); edit User=/Group=/paths after
+# copying. Do NOT enable this together with fm1-web.service on the same port.
+[Unit]
+Description=FM-1 fleet manager, headless (UI on port 80)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR-USER
+Group=YOUR-USER
+WorkingDirectory=/home/YOUR-USER/fm1/fm1-switch
+ExecStart=/home/YOUR-USER/fm1/fm1-switch/.venv/bin/fm1-switch web --headless
+# Port 80 without root: the process stays the normal user and gains only this one right.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,319 @@
+/* FM-1 fleet touch UI.
+ *
+ * Palette sampled from the boot splash (FM-1_Fleet_Manager_Boot_800x480.png):
+ *   background  #130F0C  near-black, very slightly warm
+ *   panel       #1B1510  cards, a touch lighter than the background
+ *   amber       #F0A000  the logo and progress bar -- primary accent
+ *   deep orange #F06000  the logo's shadow side -- the confirm/alert colour
+ *   cream       #F0D090  the "BOOTING FLEET MANAGER" text -- primary text
+ *   teal        #2E7F7F  the wireframe wave -- secondary, used sparingly
+ *
+ * Sizing is chosen for a 800x480 5" panel at arm's length, not for a desktop:
+ * a fingertip is ~60-75 px, so --tap is 96 px and body text is 26-30 px.
+ */
+
+:root {
+  --bg: #130f0c;
+  --panel: #1b1510;
+  --panel-hi: #2a1f16;
+  --amber: #f0a000;
+  --orange: #f06000;
+  --cream: #f0d090;
+  --dim: #8a7358;
+  --teal: #2e7f7f;
+
+  /* Every size below is a fraction of the viewport height, not a fixed pixel value.
+     cog decides the CSS viewport from the DRM output and its device-scale, which is not
+     necessarily 800x480 -- when the sizes were fixed px, a different viewport made the
+     whole interface proportionally wrong (everything small in a big viewport). Expressing
+     them in vh means the layout is correct at whatever size it is actually given.
+
+     --u is one "unit". 1vh is 1% of the viewport height, so at calc(100 * var(--u)) tall --u is calc(1 * var(--u)). */
+  /* Landscape: height rules on the 5:3 panel, but a wider-than-5:3 or narrower window is
+     limited by its width so nothing overflows sideways. Portrait (phone/tablet held upright)
+     overrides this below. */
+  --u: min(1vh, 0.6vw);
+  --tap: calc(20 * var(--u));      /* calc(20 * var(--u)) at 480 tall: a fingertip */
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg);
+  color: var(--cream);
+  font-family: "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+  font-size: calc(5.4 * var(--u));
+  overflow: hidden;              /* nothing scrolls: a resistive panel cannot swipe */
+  user-select: none;             /* a drag must never select text instead of tapping */
+  touch-action: manipulation;    /* kill double-tap zoom delay */
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- header */
+#bar {
+  flex: 0 0 calc(11.5 * var(--u));
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 calc(4 * var(--u));
+  background: var(--panel);
+  border-bottom: calc(0.625 * var(--u)) solid var(--amber);
+  font-size: calc(5.4 * var(--u)); font-weight: 700; letter-spacing: 0.2vh;
+}
+#title { color: var(--amber); }
+#summary { color: var(--cream); font-size: calc(5 * var(--u)); font-weight: 600; }
+
+/* ---------------------------------------------------------------- screen */
+#screen {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column;
+  gap: calc(2 * var(--u));
+  padding: calc(2.5 * var(--u));
+  overflow: hidden;              /* never scroll; everything must fit */
+}
+
+/* ---------------------------------------------------------------- fleet grid
+ *
+ * A 2x2 GRID, not four rows. On a 480-pixel-tall panel four rows can only be 72 px
+ * each, which is under the ~96 px a fingertip needs. Two rows of two cards gives each
+ * unit 390x190 px -- a target you can hit without aiming -- and enough room to show the
+ * sticker, the state, the firmware and the chip at once.
+ *
+ * (The console UI used a 2x2 grid too and it was the right idea; what made it useless was
+ * that 25x6 CHARACTERS is tiny. 390x190 PIXELS of real type is a different thing.)
+ */
+#screen.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: calc(2.5 * var(--u));
+  padding: calc(2.5 * var(--u));
+}
+
+/* 5-6 units: 3 columns; 7-8: 4. Cards shrink below the ideal tap size, but stay legible. */
+#screen.grid.cols3 { grid-template-columns: repeat(3, 1fr); }
+#screen.grid.cols4 { grid-template-columns: repeat(4, 1fr); }
+
+.unit {
+  display: grid;
+  grid-template-columns: calc(18 * var(--u)) 1fr;
+  grid-template-rows: auto auto 1fr;
+  gap: 0 calc(3 * var(--u));
+  align-items: center;
+  padding: calc(2 * var(--u)) calc(4 * var(--u));
+  background: var(--panel);
+  border: calc(0.7 * var(--u)) solid #33261a;
+  border-radius: calc(3 * var(--u));
+  color: var(--cream);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  min-height: 0;
+  overflow: hidden;
+}
+.unit:active { background: var(--panel-hi); border-color: var(--amber); }
+
+/* The sticker letter, big enough to read from across the room. */
+.unit .letter {
+  grid-row: 1 / 3;
+  font-size: calc(16 * var(--u)); font-weight: 800; line-height: 1;
+  color: var(--amber);
+  text-align: center;
+}
+.unit .state {
+  font-size: calc(5.4 * var(--u)); font-weight: 800; letter-spacing: 0.2vh;
+  color: var(--cream);
+}
+.unit .state.ready { color: var(--orange); }
+.unit .state.absent { color: var(--dim); }
+.unit .state.attn { color: #ff4a3a; }
+.unit .state.attn::before { content: "! "; }
+.unit .fw {
+  font-size: calc(4.6 * var(--u)); color: var(--cream); opacity: .88;
+  grid-column: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.unit .meta {
+  grid-column: 1 / 3;
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: calc(3.8 * var(--u)); color: var(--dim);
+  border-top: calc(0.208333 * var(--u)) solid #33261a; padding-top: calc(1 * var(--u)); margin-top: calc(0.8 * var(--u));
+}
+.unit .meta .chip-new { color: var(--amber); font-weight: 700; }
+
+/* First run: an empty fleet is ONE card spanning the grid, with the REGISTER action on
+ * it -- the audit called the old empty state a dead end that sent the operator to a
+ * SETTINGS screen which could not help. */
+.unit.first-run { grid-column: 1 / -1; }
+.unit.first-run .primary { min-height: calc(14 * var(--u)); font-size: calc(5.6 * var(--u)); font-weight: 800; border-radius: calc(2.5 * var(--u)); }
+
+/* ---------------------------------------------------------------- detail */
+.detail-head { display: flex; gap: calc(2.91667 * var(--u)); align-items: center; }
+.detail-head .letter { font-size: calc(11.6667 * var(--u)); font-weight: 800; color: var(--amber); }
+.detail-head .facts { font-size: calc(5 * var(--u)); color: var(--dim); line-height: 1.35; }
+.detail-head .facts b { color: var(--cream); font-weight: 600; }
+
+.list { display: flex; flex-direction: column; gap: calc(1.66667 * var(--u)); flex: 1 1 auto; overflow: hidden; }
+
+.fwrow {
+  flex: 0 0 auto;
+  min-height: calc(12 * var(--u));
+  display: flex; align-items: center; justify-content: space-between;
+  gap: calc(2.5 * var(--u));
+  padding: calc(1.66667 * var(--u)) calc(3.75 * var(--u));
+  background: var(--panel);
+  border: calc(0.416667 * var(--u)) solid #33261a;
+  border-radius: calc(2.08333 * var(--u));
+  color: var(--cream);
+  font: inherit; font-size: calc(5.41667 * var(--u));
+  text-align: left;
+  cursor: pointer;
+}
+.fwrow:active { background: var(--panel-hi); }
+.fwrow.selected { border-color: var(--amber); background: var(--panel-hi); }
+.fwrow .mark { font-size: calc(4.58333 * var(--u)); font-weight: 700; }
+.fwrow .mark.warn { color: var(--orange); }
+.fwrow .mark.unknown { color: var(--dim); }
+
+.pager { display: flex; gap: calc(2.08333 * var(--u)); align-items: center; }
+.pager button {
+  flex: 0 0 auto; min-width: calc(22.9167 * var(--u)); min-height: calc(11 * var(--u));
+  background: var(--panel); color: var(--cream);
+  border: calc(0.416667 * var(--u)) solid #33261a; border-radius: calc(2.08333 * var(--u));
+  font: inherit; font-size: calc(5 * var(--u)); font-weight: 700;
+}
+.pager button:disabled { opacity: .3; }
+.pager .count { flex: 1 1 auto; text-align: center; color: var(--dim); }
+
+.actions { display: flex; gap: calc(2.5 * var(--u)); }
+.actions button {
+  flex: 1 1 0; min-height: calc(14 * var(--u));
+  border: none; border-radius: calc(2.5 * var(--u));
+  font: inherit; font-size: calc(5.6 * var(--u)); font-weight: 800; letter-spacing: calc(0.416667 * var(--u));
+  cursor: pointer;
+}
+.primary { background: var(--amber); color: #130f0c; }
+.danger  { background: var(--orange); color: #130f0c; }
+.ghost   { background: var(--panel-hi); color: var(--cream); border: calc(0.416667 * var(--u)) solid #33261a; }
+button:disabled { opacity: .35; }
+/* A write is running: plainly grey and dead, nothing like the amber FLASH. */
+.primary.busy { background: #3a3a3a; color: #9a9a9a; border: 0; opacity: 1; }
+
+/* A row with a small button beside it (a backup and its DEL), and grids of choices. */
+.pair { display: flex; gap: calc(5 * var(--u)); }   /* DEL is never a near-miss of its row */
+.pair .fwrow:first-child { flex: 1 1 auto; min-width: 0; }
+.pair .fwrow:last-child { flex: 0 0 auto; color: var(--orange); font-weight: 700; }
+/* DEL is the biggest target on a backup row (about 106 x 62 px at 800x480): it opens the
+   RESTORE / DELETE chooser, so a miss on it costs one tap, never a deletion. */
+.pair .fwrow.del { flex: 0 0 calc(22 * var(--u)); min-height: calc(13 * var(--u)); padding: 0;
+                   justify-content: center; font-size: calc(6.25 * var(--u)); }
+.pick  { display: grid; grid-template-columns: 1fr 1fr; gap: calc(1.66667 * var(--u)); }
+.pick4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: calc(1.66667 * var(--u)); flex: 1 1 auto; align-content: start; }
+.pick .fwrow, .pick4 .fwrow { justify-content: center; }
+.detail-head .foot-btn { margin-left: auto; }
+.detail-head .foot-btn ~ .foot-btn { margin-left: 0; }
+.foot-btn.update { color: var(--amber); border-color: var(--amber); }
+
+/* ---------------------------------------------------------------- footer */
+#foot {
+  flex: 0 0 calc(13 * var(--u));
+  display: flex; align-items: center; gap: calc(2.5 * var(--u));
+  padding: 0 calc(2.91667 * var(--u));
+  background: var(--panel);
+  border-top: calc(0.625 * var(--u)) solid #33261a;
+}
+#status { flex: 1 1 auto; color: var(--dim); font-size: calc(4.4 * var(--u)); }
+.foot-btn {
+  min-height: calc(11.6667 * var(--u)); padding: 0 calc(4 * var(--u));
+  background: var(--panel-hi); color: var(--cream);
+  border: calc(0.416667 * var(--u)) solid #33261a; border-radius: calc(1.66667 * var(--u));
+  font: inherit; font-size: calc(5 * var(--u)); font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- modal */
+.modal {
+  position: fixed; inset: 0;
+  background: rgba(10, 7, 5, .92);
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(4.16667 * var(--u));
+  z-index: 50;
+}
+.modal[hidden] { display: none; }
+.modal-box {
+  width: 100%; max-width: calc(150 * var(--u));
+  background: var(--panel);
+  border: calc(0.625 * var(--u)) solid var(--orange);
+  border-radius: calc(3 * var(--u));
+  padding: calc(4.16667 * var(--u)) calc(5 * var(--u)) calc(5 * var(--u));
+  display: flex; flex-direction: column;
+}
+.modal-box h2 {
+  margin: 0 0 calc(2.5 * var(--u)); font-size: calc(7.08333 * var(--u)); letter-spacing: calc(0.208333 * var(--u));
+  color: var(--orange);
+}
+#confirm-body { font-size: calc(5 * var(--u)); line-height: 1.45; margin-bottom: calc(4.16667 * var(--u)); }
+#confirm-body b { color: var(--cream); }
+#confirm-body .warn { color: var(--orange); font-weight: 600; }
+.modal-actions { display: flex; gap: calc(2.91667 * var(--u)); }
+#chooser-actions { margin-top: calc(2.5 * var(--u)); }
+.modal-actions #confirm-cancel, .modal-actions #chooser-cancel { flex: 1.6 1 0; }   /* the safe choice is the bigger target */
+.modal-actions .big {
+  flex: 1 1 0; min-height: var(--tap);
+  border: none; border-radius: calc(2.5 * var(--u));
+  font: inherit; font-size: calc(6.25 * var(--u)); font-weight: 800; letter-spacing: calc(0.416667 * var(--u));
+}
+
+/* Opener-aware confirm placement (audit UX-01/UX-02). The opener's own press repeats on
+ * this resistive panel while the dialog is under the finger, so the actions row is laid
+ * out at the vertical end of the box AWAY from the opener, and the confirm button at the
+ * horizontal end away from it. showConfirm() measures the opener and sets the two
+ * classes; with no geometry at all the classes are absent and the layout is exactly the
+ * pre-audit one (actions at the bottom, confirm on the right).
+ * Overlap measured before the fix: SEVERAL's FLASH n UNITS under WRITE 13,366 px^2,
+ * RESTORE's BACK UP under its own confirm 6,630 px^2; both are 0 with the row moved to
+ * the top -- the heading keeps its place directly above the actions. */
+.modal-box.actions-top #confirm-body { order: 2; }
+.modal-box.actions-top .modal-actions { margin-bottom: calc(4.16667 * var(--u)); }
+.modal-actions.go-left { flex-direction: row-reverse; }   /* confirm left, CANCEL right */
+
+/* Very short screens: shave the chrome rather than let anything scroll. */
+@media (max-height: calc(95.8333 * var(--u))) {
+  #bar { flex-basis: calc(10.8333 * var(--u)); font-size: calc(5.41667 * var(--u)); }
+  #foot { flex-basis: calc(12.5 * var(--u)); }
+  .unit .letter { font-size: calc(10.8333 * var(--u)); }
+  .unit .state { font-size: calc(5 * var(--u)); }
+  .unit .fw { font-size: calc(4.16667 * var(--u)); }
+}
+
+/* on-screen keyboard (name entry) */
+.typed { font-size: 7vh; min-height: 9vh; letter-spacing: .1em; padding: 0 1vh; color: var(--fg, #fff); }
+.kb { display: flex; flex-direction: column; gap: calc(1.2 * var(--u)); flex: 1 1 auto; }
+.kbrow { display: grid; grid-template-columns: repeat(10, 1fr); gap: calc(1.2 * var(--u)); flex: 1 1 0; }
+.kbrow .key { min-height: 0; font-size: 5vh; padding: 0; }
+
+/* Reactive layout (a phone or tablet as the screen). The HDMI panel is a fixed 5:3 landscape
+   canvas that never scrolls; any other window adapts:
+     - landscape of any shape: the same layout, scaled by whichever of height/width is tighter
+     - portrait: sizes follow the width, the unit cards stack in one column (two on a tablet),
+       and the page scrolls vertically instead of squeezing four cards into a sliver. */
+@media (orientation: portrait) {
+  :root { --u: min(1vh, 1.15vw); }
+  html, body { height: auto; min-height: 100%; overflow: visible; }
+  body { height: 100vh; height: 100dvh; overflow: hidden; }
+  #screen { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+  #screen.grid, #screen.grid.cols3, #screen.grid.cols4 {
+    grid-template-columns: 1fr; grid-template-rows: none; grid-auto-rows: calc(38 * var(--u));
+    align-content: start;
+  }
+  .unit .fw { white-space: normal; }
+  .list { overflow: visible; flex: 0 0 auto; }
+  .pick4 { flex: 0 0 auto; }
+  .modal { overflow-y: auto; align-items: flex-start; }
+  /* three labelled buttons do not fit one phone-width row: the chooser stacks them, DELETE last */
+  #chooser-actions, #chooser-actions.go-left { flex-direction: column; }
+  #chooser-actions .big { flex: 0 0 auto; }
+  .modal-box { max-width: 100%; margin: auto; }
+  .kb { min-height: calc(55 * var(--u)); }
+}
+@media (orientation: portrait) and (min-width: 600px) {
+  #screen.grid, #screen.grid.cols3, #screen.grid.cols4 { grid-template-columns: 1fr 1fr; }
+}

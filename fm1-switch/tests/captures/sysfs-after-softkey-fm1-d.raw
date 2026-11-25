@@ -1,0 +1,38 @@
+# captured 2026-11-25 on FM-Pi, sysfs usb attributes (after-softkey-fm1-d), reformatted to the '-- port' layout the replay reads; values unchanged
+== sysfs
+-- 1-1
+idVendor=0424
+idProduct=2514
+bcdDevice=0bb3
+-- 1-1.1
+idVendor=0424
+idProduct=2514
+bcdDevice=0bb3
+-- 1-1.1.1
+idVendor=0424
+idProduct=7800
+bcdDevice=0300
+-- 1-1.1.2
+idVendor=1209
+idProduct=0001
+bcdDevice=0320
+product=Felucca
+manufacturer=Hügelton Instruments
+-- 1-1.1.3
+idVendor=1209
+idProduct=0001
+bcdDevice=0310
+product=Felucca
+manufacturer=Hügelton Instruments
+-- 1-1.2
+idVendor=1209
+idProduct=0001
+bcdDevice=0420
+product=FM-1
+manufacturer=Juan Jiant
+-- 1-1.3
+idVendor=4c4a
+idProduct=8057
+bcdDevice=0300
+product=WL80UBOOT1.00
+manufacturer=WL80UBOOT1.00

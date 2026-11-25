@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FM-1 Fleet</title>
+<!--
+  The touch UI, as a web page.
+
+  Why a page rather than a terminal screen: the console version fought the medium at
+  every turn -- fonts sized by a character grid, box-drawing glyphs that the console font
+  lacked, and taps that had to be read from an evdev device by hand. A browser gives real
+  typography, real hit targets and reliable touch for free.
+
+  Designed for a 5" 800x480 panel at arm's length:
+    --tap   the smallest target, 96 px. A fingertip is ~60-75 px, so this clears it.
+    body    ~28 px text: readable from 2-3 m on this panel.
+  Everything is a button; nothing needs swiping or scrolling.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="stylesheet" href="fleet.css">
+</head>
+<body>
+<header id="bar">
+  <span id="title">FM-1 FLEET</span>
+  <span id="summary"></span>
+</header>
+
+<main id="screen" class="grid"></main>
+
+<footer id="foot">
+  <button id="back" class="foot-btn" hidden>&#8592; BACK</button>
+  <span id="status"></span>
+  <button id="sets" class="foot-btn">SETS</button>
+  <button id="routes" class="foot-btn">ROUTES</button>
+  <button id="settings" class="foot-btn">SETTINGS</button>
+</footer>
+
+<!-- The write confirmation. A real modal: it covers the screen, it cannot be dismissed by
+     the same press that opened it, and it names the unit and firmware in large type.
+     fleet.js re-places the actions row per opener (showConfirm): the row goes to the
+     vertical end of the box away from the opener, and the confirm button to the
+     horizontal end away from it, so a repeat of the opener press cannot land on it. -->
+<div id="confirm" class="modal" hidden>
+  <div class="modal-box" id="confirm-box">
+    <h2 id="confirm-title">FLASH THIS UNIT?</h2>
+    <div id="confirm-body"></div>
+    <div class="modal-actions" id="confirm-actions">
+      <button id="confirm-cancel" class="big ghost">CANCEL</button>
+      <button id="confirm-go" class="big danger">WRITE</button>
+    </div>
+  </div>
+</div>
+
+<!-- The backup chooser. DEL on a backup row opens this, never a delete directly: RESTORE or
+     DELETE are each a second, separate confirmation. Placed like the confirm (showConfirm's
+     rules: away from the opener, armed for ARM_MS), so a repeat of the DEL press cannot hit
+     DELETE. -->
+<div id="chooser" class="modal" hidden>
+  <div class="modal-box" id="chooser-box">
+    <h2 id="chooser-title">BACKUP</h2>
+    <div id="chooser-body"></div>
+    <div class="modal-actions" id="chooser-actions">
+      <button id="chooser-cancel" class="big ghost">CANCEL</button>
+      <button id="chooser-restore" class="big primary">RESTORE…</button>
+      <button id="chooser-delete" class="big danger">DELETE…</button>
+    </div>
+  </div>
+</div>
+
+<script src="fleet.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# The dawless hub router (docs/ROADMAP-dawless-hub.md): routes MIDI between the units over
+# ALSA, following the patch named "default" in ~/fm1-patches.json (set another with
+# FM1_PATCH or "patch" in ~/.config/fm1/config.json). A *user* unit like fm1-web, so it needs
+# no sudo and no edit of paths when the clone is at ~/fm1; the user must have lingering on
+# (`loginctl enable-linger`) to start it at boot.
+#
+# Safe to leave running: with no patch it idles, it follows edits to the patch file, and it
+# lets go of every unit when the soft key is sent (fm1-switch download, or the panel), so it
+# never stands between you and a flash. SIGTERM releases the units and removes the status file.
+[Unit]
+Description=FM-1 dawless hub MIDI router
+Documentation=https://thefirmwarehub.com/
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fm1/fm1-switch
+ExecStart=%h/fm1/fm1-switch/.venv/bin/fm1-switch route run
+Restart=on-failure
+RestartSec=5
+# Two starts a second that keep failing (no ALSA, for example) stop after a few tries rather
+# than spin: systemd's default start limit, written down here on purpose.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target
