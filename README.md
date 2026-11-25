@@ -1,7 +1,8 @@
 # FM-1 Fleet Manager
 
 A Raspberry Pi with a small touchscreen that swaps firmware on a bench of
-**M-VAVE FM-1** synthesizers. You don't need a keyboard, and the Pi never guesses which unit is which.
+**M-VAVE FM-1** synthesizers, and can also act as their USB MIDI hub, routing between the units.
+You don't need a keyboard, and the Pi never guesses which unit is which.
 
 ### Screenshots
 
@@ -107,8 +108,13 @@ enforced and where it currently is not.
 **What it will never do:** pick a unit for you, write without a confirmation that names the
 unit, or write without taking a backup first.
 
-**What it does not do:** host or route MIDI. The Pi only swaps firmware. MIDI hosting is out
-of scope.
+**What the router does, and does not do:** the optional MIDI router (see the install notes)
+connects the units' USB MIDI ports through the Pi, with saved patches, per-route channel
+remap and filters, and a PANIC button. It never touches a unit's flash. It is young: a live
+route from one unit to another and attaching all four units are verified on the bench, but
+round-trip latency to a unit and what the receiving firmware does with the notes are not.
+Under-voltage was seen with four units on the Pi's own ports, so use a powered hub. Its status
+is in [`docs/ROADMAP-dawless-hub.md`](docs/ROADMAP-dawless-hub.md).
 
 ## Install (current, bench-specific)
 

@@ -1,7 +1,10 @@
 # Roadmap item: the Pi as a USB MIDI host and dawless hub
 
-**Status:** idea, 2026-11-25. **Not investigated, not built.** Nothing here has been tried on
-hardware. Every claim below is **UNVERIFIED** unless it says otherwise.
+**Status (updated 2026-11-25):** the core router is built and runs on the bench Pi (routing
+core, ALSA sequencer client, systemd unit, ROUTES page on the touch UI, panic, `fm1-switch route`).
+Verified so far: all four units attach, a live route A to B passes messages byte for byte, and
+the soft key still works while the router holds the units. The rest of the functions below are
+ideas. Every claim here is **UNVERIFIED** unless it says otherwise.
 
 ## The idea
 
