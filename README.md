@@ -232,6 +232,14 @@ Two parser tests need real firmware packages and skip without them. See
   app names the hub, caches the catalogue for a day and verifies every SHA-256. Two gaps are
   still open (audit HUB-02/03): the panel's GET FIRMWARE list does not yet credit makers or
   link repositories, and a forced refresh can skip the once-a-day rule.
+* **Prior art.** The research behind this project leans on three MIT-licensed projects, linked
+  here with thanks. No code from them is included.
+  [MvaveFM1Unbricker](https://github.com/Quixotic7/MvaveFM1Unbricker) (Michael P Jones) for
+  recovery and restore safety,
+  [FM-1 Transporter](https://github.com/kurogedelic/FM-1-transporter) (kurogedelic) for the
+  hardware recovery route, and
+  [jl-uboot-tool](https://github.com/kagaimiq/jl-uboot-tool) (Andrey Grigoryev) for the
+  bootloader protocol that m-flasher follows.
 * **The firmware makers.** Every firmware this tool installs is someone else's work. Their names
   and repositories are on the hub. This repository does not redistribute any firmware.
 
