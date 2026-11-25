@@ -219,8 +219,12 @@ Two parser tests need real firmware packages and skip without them. See
 ## Credits
 
 * **[m-flasher](https://github.com/jvitkauskas/m-flasher)** by jvitkauskas does every read and
-  write to the FM-1. This project only orchestrates it. Owner TODO: confirm its licence and
-  state it here.
+  write to the FM-1. This project only orchestrates it, running it as a separate program, and
+  does not bundle or redistribute it. m-flasher is MIT licensed (c) 2026 Julius Vitkauskas,
+  which is compatible with this project's MIT licence (checked 2026-11-25). Its bundled
+  `data/` files are MIT too, from [m-bootloader](https://github.com/jvitkauskas/m-bootloader).
+  If you redistribute the m-flasher binary or `.deb` with this project, include its licence
+  and copyright notice.
 * **The Firmware Hub, https://thefirmwarehub.com**, supplies the firmware catalogue. The
   compilation is licensed CC BY 4.0, and card texts and pictures belong to their makers. The
   hub's terms ask apps to name the hub, credit each firmware's maker and link their repository,

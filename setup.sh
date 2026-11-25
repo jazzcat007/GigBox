@@ -53,7 +53,7 @@ verify_arch() {
             cat >&2 <<EOS
 error: this image is NOT 64-bit ARM (uname -m = $arch, want aarch64).
 
-The m-flasher package we ship and verify is arm64, and will NOT install on a 32-bit OS.
+The m-flasher package this setup expects is arm64, and will NOT install on a 32-bit OS.
 Re-flash the card with Raspberry Pi OS Lite (64-bit) — Pi Imager, not a raw dd — and
 re-run. (The Pi 3B+ is an ARMv8 chip; it runs the 64-bit image fine. 32-bit is the bug,
 not the board.)
