@@ -3,6 +3,22 @@
 A Raspberry Pi with a small touchscreen that swaps firmware on a bench of
 **M-VAVE FM-1** synthesizers. You don't need a keyboard, and the Pi never guesses which unit is which.
 
+### Screenshots
+
+The touch UI at 800x480, the size of the 5-inch panel, captured live from the bench Pi.
+The same pages are served to a phone.
+
+| Fleet | Rig sets |
+|---|---|
+| ![Fleet: four units, all running](docs/screenshots/fleet.png) | ![Sets: saved rigs and SNAPSHOT](docs/screenshots/sets.png) |
+
+| Routes | Settings |
+|---|---|
+| ![Routes: patches, router status, PANIC](docs/screenshots/routes.png) | ![Settings: recent activity, REGISTER, GET FIRMWARE](docs/screenshots/settings.png) |
+
+A `~` after a unit's letter means it was matched by USB port, not by a readable id (see
+[how it works](#how-it-works)).
+
 ### Photos (owner to supply)
 
 No photos are in the repository yet. They have to come from the bench, not from a
@@ -12,12 +28,10 @@ generator, so the places they belong are marked below. Save each file under
 | File | What to photograph |
 |---|---|
 | `docs/images/bench-overview.jpg` | the Pi, the 5-inch panel and the four FM-1s together, as they sit on the bench |
-| `docs/images/fleet-screen.png` | the fleet screen on the panel (`FM-1 FLEET`, one tile per unit) — a screenshot is fine |
 | `docs/images/write-confirm.png` | a WRITE confirmation on the panel, with the unit and the package named |
 | `docs/images/backup-chooser.png` | a backup row's DEL, opening the RESTORE / DELETE chooser |
 
 <!-- ![The bench: Pi, panel and four units](docs/images/bench-overview.jpg) -->
-<!-- ![The fleet screen on the panel](docs/images/fleet-screen.png) -->
 <!-- ![A WRITE confirmation on the panel](docs/images/write-confirm.png) -->
 <!-- ![The RESTORE / DELETE chooser](docs/images/backup-chooser.png) -->
 
