@@ -1,13 +1,16 @@
 # FM-1 Fleet Manager
 
-A Raspberry Pi with a small touchscreen that swaps firmware on a bench of
-**M-VAVE FM-1** synthesizers, and can also act as their USB MIDI hub, routing between the units.
-You don't need a keyboard, and the Pi never guesses which unit is which.
+A Raspberry Pi that swaps firmware on a bench of **M-VAVE FM-1** synthesizers, and can also act
+as their USB MIDI hub, routing MIDI and running a master clock between the units. **No screen
+needed:** the Pi can run headless, with nothing attached but power, USB and network, and you drive
+the same touch UI from a phone or tablet on your network (see *Headless* below). A small HDMI
+touch panel is optional, if you would rather have one on the bench. You don't need a keyboard,
+and the Pi never guesses which unit is which.
 
 ### Screenshots
 
-The touch UI at 800x480, the size of the 5-inch panel, captured live from the bench Pi.
-The same pages are served to a phone.
+The touch UI at 800x480, the size of the optional 5-inch panel, captured live from the bench Pi.
+The same pages are served to a phone, which is all you need.
 
 | Fleet | Rig sets |
 |---|---|
@@ -152,7 +155,7 @@ to change.
    "registry": "~/fm1-units.json", "portmap": "~/fm1-portmap.txt", "flasher": "/path/to/m-flasher"}`.
    `units` is 1–8 (stickers A–H; the panel grid widens above 4). The `FM1_*` environment
    variables still win over the file. Restart `fm1-web` after changing it.
-   **Headless (no panel).** On a Pi Zero 2 W or any small board, skip the kiosk and the panel
+   **Headless (no panel, no screen).** On a Pi Zero 2 W or any small board, skip the kiosk and the panel
    steps below. Install `fm1-switch/systemd/fm1-web-headless.service` to `/etc/systemd/system/`
    (edit `YOUR-USER`), enable it, and open `http://<pi-address>/` on a phone or tablet
    on the same network. It is the same screen as the 5-inch panel, sized for a phone held

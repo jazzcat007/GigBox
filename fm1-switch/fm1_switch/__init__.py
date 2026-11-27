@@ -1,4 +1,4 @@
-"""fm1-switch — a touchscreen firmware switcher for the M-VAVE FM-1.
+"""fm1-switch — a firmware switcher and MIDI hub (phone/tablet UI, touch panel optional) for the M-VAVE FM-1.
 
 Thin, stdlib-only, daemon-less. It does not touch the flash itself: every write is
 delegated to ``m-flasher``, which talks to the unit's download-mode SCSI device and

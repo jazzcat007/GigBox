@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fm1-switch"
 version = "0.1.0"
-description = "Touchscreen firmware switcher for a fleet of M-VAVE FM-1 synths on a Raspberry Pi"
+description = "Firmware switcher and MIDI hub (phone UI, optional touch panel) for a fleet of M-VAVE FM-1 synths on a Raspberry Pi"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
