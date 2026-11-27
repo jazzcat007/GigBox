@@ -308,3 +308,176 @@ def test_a_unit_that_boots_at_40_seconds_is_relearned_not_reported_stuck(rig, mo
     monkeypatch.setattr(softkey, "port_ids", ids)          # ~0.5 s per poll: running at ~40 s
     monkeypatch.setattr(guided.registry, "relearn_after_flash", lambda *a: "ok")
     assert run(A).relearned == "ok"
+
+
+# ------------------------------------------------------------------ reconcile
+
+def _reconcile_world(monkeypatch, rig, *, running, bindings, fingerprints, midi=True):
+    """Running units on ports the registry has never seen. ``running`` = {port: flash id}.
+
+    Four units sharing one fingerprint is the bench state of 2026-11-27: the registry holds
+    stale ports, and nothing on USB tells the units apart."""
+    from fm1_switch import registry
+    bus = rig(dict(running))
+    reg = registry.Registry()
+    for slot, (uid, fp, port) in bindings.items():
+        reg.units[slot] = registry.Binding(slot=slot, unit_id=uid, fingerprint=fp, port=port)
+    monkeypatch.setattr(registry, "load", lambda path=None: reg)
+    monkeypatch.setattr(registry, "running", lambda: [
+        registry.RunningUnit(port=p, vendor_product="1209:0001" if midi else "4d4a:4155",
+                             product="Felucca", fingerprint=fingerprints[p])
+        for p in sorted(bus.running)])
+    monkeypatch.setattr(softkey, "port_ids",
+                        lambda port: "1209:0001" if port in bus.running else "4c4a:8057"
+                        if any(d.port == port for d in bus.download) else None)
+    learned = {}
+    def relearn(uid, port, label):
+        learned[uid] = port
+        return "ok"
+    monkeypatch.setattr(registry, "relearn_after_flash", relearn)
+    return bus, learned
+
+
+SAME_FP = {"1-2.1": "03a1", "1-2.2": "03a1", "1-2.3": "03a1", "1-2.4": "03a1"}
+STALE = {"fm1-a": (A, "03a1", "1-1.9"), "fm1-b": (B, "03a1", "1-1.8"),
+         "fm1-c": (C, "03a1", "1-1.7"), "fm1-d": (D, "03a1", "1-1.6")}
+
+
+def test_reconcile_matches_look_alike_units_by_flash_id_and_learns_their_ports(rig, monkeypatch):
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": C, "1-2.2": A, "1-2.3": D, "1-2.4": B},
+        bindings=STALE, fingerprints=SAME_FP)
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert learned == {C: "1-2.1", A: "1-2.2", D: "1-2.3", B: "1-2.4"}
+    assert [s for s, _, _ in out.matched] == ["fm1-a", "fm1-b", "fm1-c", "fm1-d"]
+    assert out.message == "matched A B C D" and not out.missing and not out.stuck
+    assert "install" not in kinds(bus) and kinds(bus).count("restart") == 4
+
+
+def test_reconcile_does_nothing_when_every_unit_is_already_placed(rig, monkeypatch):
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A}, bindings={"fm1-a": (A, "03a1", "1-2.1")},
+        fingerprints={"1-2.1": "03a1"})
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert bus.log == [] and learned == {} and "already matched" in out.message
+
+
+def test_reconcile_never_binds_a_new_id_and_reports_it(rig, monkeypatch):
+    E = "aaaaaaaa00000005"
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A, "1-2.2": E},
+        bindings={"fm1-a": (A, "03a1", "1-1.9"), "fm1-b": (B, "03a1", "1-1.8")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a1"})
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert learned == {A: "1-2.1"} and out.unregistered == [E]
+    assert out.missing == ["fm1-b"] and "use REGISTER" in out.message
+
+
+def test_reconcile_restarts_a_unit_it_cannot_read_and_does_not_guess_it(rig, monkeypatch):
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A, "1-2.2": B},
+        bindings={"fm1-a": (A, "03a1", "1-1.9"), "fm1-b": (B, "03a1", "1-1.8")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a1"})
+    bus.unreadable = {B}
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert learned == {A: "1-2.1"} and kinds(bus).count("restart") == 2
+    assert out.unregistered == ["port 1-2.2"]
+
+
+def test_reconcile_reports_a_unit_that_will_not_restart(rig, monkeypatch):
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A, "1-2.2": B},
+        bindings={"fm1-a": (A, "03a1", "1-1.9"), "fm1-b": (B, "03a1", "1-1.8")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a1"})
+    bus.fail_restart = {Device("/dev/sg2", "1-2.2")}
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert out.stuck == [B] and learned == {A: "1-2.1"} and "power-cycle" in out.message
+
+
+def test_reconcile_with_no_midi_link_asks_for_a_power_cycle(rig, monkeypatch):
+    bus, _ = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A}, bindings={"fm1-a": (A, "0100", "1-1.9")},
+        fingerprints={"1-2.1": "0200"}, midi=False)
+    with pytest.raises(WriteRefused, match="MIDI link"):
+        guided.reconcile(lock=threading.Lock(), **FAST)
+    assert bus.log == []
+
+
+def test_reconcile_refuses_while_a_flash_runs(rig, monkeypatch):
+    bus, _ = _reconcile_world(monkeypatch, rig, running={"1-2.1": A},
+                              bindings={"fm1-a": (A, "0100", "1-1.9")},
+                              fingerprints={"1-2.1": "0200"})
+    lock = threading.Lock()
+    lock.acquire()
+    with pytest.raises(WriteRefused, match="flash is running"):
+        guided.reconcile(lock=lock)
+    assert bus.log == []
+
+
+def test_after_reconcile_look_alike_units_are_placed_by_the_ports_it_learned():
+    """The registry side of the promise: once each sticker holds its port, four units that
+    share one fingerprint are paired one-to-one instead of showing as '?'."""
+    from fm1_switch import registry
+    reg = registry.Registry()
+    ports = {"fm1-a": "1-2.2", "fm1-b": "1-2.4", "fm1-c": "1-2.1", "fm1-d": "1-2.3"}
+    for slot, uid in zip(ports, (A, B, C, D)):
+        reg.units[slot] = registry.Binding(slot=slot, unit_id=uid, fingerprint="03a1",
+                                           port=ports[slot])
+    runs = [registry.RunningUnit(port=p, vendor_product="1209:0001", product="Felucca",
+                                 fingerprint="03a1") for p in sorted(ports.values())]
+    got = {b.slot: r.port for r, b in registry._match_running(reg, runs, set())}
+    assert got == ports
+
+
+def test_reconcile_does_not_call_an_already_placed_unit_missing(rig, monkeypatch):
+    """Bench 2026-11-27: B had a unique fingerprint, was never moved, and was reported
+    'not found' beside A, C and D which were matched."""
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A, "1-2.2": B},
+        bindings={"fm1-a": (A, "03a1", "1-1.9"), "fm1-b": (B, "03a0", "1-1.8")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a0"})
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert out.missing == [] and "not found" not in out.message
+
+
+def test_swapped_look_alike_units_are_not_silently_swapped_letters(rig, monkeypatch):
+    """Rearranged cables: A now sits where B was and vice versa. Both share a fingerprint, so
+    the old ports would pair them wrongly. The device number is the proof they have not
+    moved; it changed (they re-enumerated), so reconcile must re-read them by flash id."""
+    from fm1_switch import registry
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": B, "1-2.2": A},
+        bindings={"fm1-a": (A, "03a1", "1-2.1"), "fm1-b": (B, "03a1", "1-2.2")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a1"})
+    reg = registry.load()
+    reg.units["fm1-a"].devnum = reg.units["fm1-b"].devnum = "7"       # as learned before
+    runs = [registry.RunningUnit(port=p, vendor_product="1209:0001", product="Felucca",
+                                 fingerprint="03a1", devnum="9") for p in ("1-2.1", "1-2.2")]
+    monkeypatch.setattr(registry, "running", lambda: runs)
+    out = guided.reconcile(lock=threading.Lock(), **FAST)
+    assert learned == {B: "1-2.1", A: "1-2.2"} and out.message == "matched A B"
+
+
+def test_a_port_pairing_is_proven_only_while_the_device_number_is_unchanged():
+    from fm1_switch import registry
+    b = registry.Binding(slot="fm1-a", unit_id=A, fingerprint="03a1", port="1-2.1", devnum="7")
+    mk = lambda dn: registry.RunningUnit(port="1-2.1", vendor_product="1209:0001",
+                                         product="Felucca", fingerprint="03a1", devnum=dn)
+    twin = registry.RunningUnit(port="1-2.2", vendor_product="1209:0001", product="Felucca",
+                                fingerprint="03a1", devnum="8")
+    reg = registry.Registry()
+    assert registry._unproven_port_pairing(reg, [mk("7"), twin], mk("7"), b) is False
+    assert registry._unproven_port_pairing(reg, [mk("9"), twin], mk("9"), b) is True
+    # a unit whose fingerprint is unique needs no proof
+    assert registry._unproven_port_pairing(reg, [mk("9")], mk("9"), b) is False
+
+
+def test_scan_fleet_reads_every_unit_even_when_the_registry_thinks_it_has_them_all(rig, monkeypatch):
+    """SCAN FLEET never trusts the registry's own placement: it reads every unit's id."""
+    bus, learned = _reconcile_world(
+        monkeypatch, rig, running={"1-2.1": A, "1-2.2": B},
+        bindings={"fm1-a": (A, "03a1", "1-2.1"), "fm1-b": (B, "03a0", "1-2.2")},
+        fingerprints={"1-2.1": "03a1", "1-2.2": "03a0"})
+    out = guided.reconcile(lock=threading.Lock(), everything=True, **FAST)
+    assert learned == {A: "1-2.1", B: "1-2.2"} and out.message == "matched A B"
+    assert kinds(bus).count("restart") == 2

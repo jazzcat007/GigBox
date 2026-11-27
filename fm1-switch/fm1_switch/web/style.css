@@ -232,3 +232,27 @@ input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: -
   main { padding: 11px; }
   .cards { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------- settings */
+.sgroup { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
+.sgroup > summary { cursor: pointer; padding: 11px 14px; font-weight: 600; }
+.srow { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(200px, 1.4fr) auto; gap: 4px 12px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--line); }
+.srow label { font-size: 14px; }
+.srow .hint { grid-column: 1 / -1; }
+.sfield { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sfield input { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+.sfield input:disabled { opacity: .6; }
+.sfield .unit { color: var(--muted); font-size: 12.5px; }
+.sbadges { display: flex; gap: 6px; }
+button.small { padding: 4px 9px; font-size: 12px; }
+.settings-bar { display: flex; gap: 8px; position: sticky; bottom: 0; padding: 10px 0; background: var(--bg); }
+@media (max-width: 600px) {
+  .srow { grid-template-columns: 1fr; }
+  .sbadges:empty { display: none; }
+}
+
+/* ------------------------------------------------------- channel layout */
+input.chan { flex: 0 0 4.2em; width: 4.2em; text-align: center; }
+.hint.pad { padding: 4px 14px 10px; }
+#layout select { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+#layout .settings-bar { position: static; padding: 10px 14px; background: transparent; border-top: 1px solid var(--line); }

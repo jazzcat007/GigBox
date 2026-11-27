@@ -132,7 +132,7 @@ function unitById(id) { return state.units.find((u) => u.unit_id === id) || null
 // ------------------------------------------------------------------ rendering
 
 // The routes screens set their own footer hint (renderRoutes and friends).
-const ROUTE_VIEWS = new Set(["routes", "patch", "routeadd", "routeopt", "pname", "ptype", "sets", "set"]);
+const ROUTE_VIEWS = new Set(["routes", "patch", "clock", "routeadd", "routeopt", "pname", "ptype", "sets", "set"]);
 
 function render() {
   state.gen++;
@@ -141,7 +141,8 @@ function render() {
   // The fleet is a 2x2 grid of big cards; the unit and settings views are stacked
   // columns. One container, two layouts.
   screen.className = state.view === "fleet"
-    ? "grid" + (state.units.length > 6 ? " cols4" : state.units.length > 4 ? " cols3" : "") : "";
+    ? "grid" + (state.units.length > 6 ? " cols4" : state.units.length > 4 ? " cols3" : "")
+      + (needsMatching() ? " withbar" : "") : "";
   $("#back").hidden = state.view === "fleet";
   $("#back").disabled = writing();
   $("#settings").hidden = state.view === "settings";
@@ -160,6 +161,7 @@ function render() {
   else if (state.view === "sets") renderSets(screen);
   else if (state.view === "set") renderSet(screen);
   else if (state.view === "patch") renderPatch(screen);
+  else if (state.view === "clock") renderClock(screen);
   else if (state.view === "routeadd") renderRouteAdd(screen);
   else if (state.view === "routeopt") renderRouteOpt(screen);
   else if (state.view === "pname") renderPatchName(screen);
@@ -299,6 +301,14 @@ function renderFleet(screen) {
     ));
     return;
   }
+  if (needsMatching()) {
+    // A bar ABOVE the unit grid (not a grid cell: the grid clips, and a card squeezed into
+    // one of its rows lost its button on the panel, 2026-11-27).
+    screen.append(el("div", { class: "regbar" },
+      el("span", { class: "state attn", text: "FLEET NOT REGISTERED" }),
+      el("button", { class: "primary", text: "RE-REGISTER FLEET", disabled: writing(),
+                     onclick: (ev) => requestReconcile(ev) })));
+  }
   for (const u of state.units) {
     const chip = u.chip_kind
       ? el("span", { class: u.chip_kind === "new" ? "chip-new" : "", text: `${u.chip_kind} chip` })
@@ -321,6 +331,25 @@ function renderFleet(screen) {
       ),
     ));
   }
+}
+
+// After a reconnect the registered letters can show NOT CONNECTED while the same units show
+// as "?": running units that look alike cannot be told apart from USB, only by flash id.
+// Both signs together mean "match them again"; a "?" with no missing letter is a new unit.
+function needsMatching() {
+  const strays = state.units.some((u) => u.running && !u.slot);
+  const lost = state.units.some((u) => u.slot && !u.running && !u.download);
+  // A letter chosen only by a last-seen port (hint "port") may have swapped with a look-alike.
+  return (strays && lost) || state.units.some((u) => u.running && u.slot && u.hint === "port");
+}
+
+function requestReconcile(opener) {
+  showConfirm({ action: "reconcile", unitId: "reconcile", label: "Fleet" },
+    "RE-REGISTER THE FLEET?", "RE-REGISTER", opener,
+    el("div", {}, el("b", { text: "Match every plugged-in unit to its profile (A–D)" })),
+    el("div", { text: "Every running unit goes into download mode, the Pi reads each one's flash id and " +
+                      "matches it to its profile, then restarts them all. Nothing is written to a unit." }),
+    el("div", { class: "warn", text: "Sound stops for about half a minute." }));
 }
 
 function openUnit(unitId) {
@@ -706,6 +735,7 @@ async function renderSettings(screen) {
     const what = r.event === "restart" ? "restarted"
       : r.event === "rename" ? `named ${r.message}`
       : r.event === "bind" ? `registered as ${r.message}`
+      : r.event === "reconcile" ? `units matched: ${r.message || ""}`
       : r.event === "backup-deleted" ? "backup deleted"
       : r.event === "refused" ? `REFUSED: ${r.message || ""}`
       : r.event === "setup-pending" ? `${(r.package || "").replace(/\.fwsc$/, "")} — SETUP UNFINISHED`
@@ -829,6 +859,10 @@ async function perform(pend) {
     // The letter in the answer is what the server actually assigned, not what we showed.
     const res = await postJson("/api/register/bind", { unit_id: pend.unitId, confirm });
     return `Unit …${pend.unitId.slice(-4)} is now sticker ${res.label !== undefined ? res.label : pend.letter}. Tap it to name it or flash it.`;
+  }
+  if (pend.action === "reconcile") {
+    const res = await postJson("/api/reconcile", { confirm: "reconcile", all: true });
+    return (res.message || "done").toUpperCase();
   }
   if (pend.action === "setup-install") {
     const res = await postJson("/api/setup/install", { unit_id: pend.unitId, confirm: pend.unitId });
@@ -1077,7 +1111,7 @@ async function refreshRouter() {
   if (state.pending || state.busy) return;
   const before = state.rsig;
   await loadRouter();
-  if (state.rsig !== before && ["routes", "patch"].includes(state.view)) render();
+  if (state.rsig !== before && ["routes", "patch", "clock"].includes(state.view)) render();
 }
 
 async function openRoutes() {
@@ -1133,12 +1167,87 @@ function renderRoutes(screen) {
   screen.append(list, el("div", { class: "actions" },
     el("button", { class: "primary", text: "NEW PATCH", disabled: writing(),
                    onclick: () => { state.view = "pname"; render(); } }),
+    el("button", { class: "ghost", text: clockButtonText(), disabled: writing(),
+                   onclick: () => { state.notice = false; state.view = "clock"; render(); } }),
     el("button", { class: "danger", text: "PANIC", disabled: writing(), onclick: (ev) => requestPanic(ev) }),
     pages > 1 ? el("button", { class: "ghost", text: `‹ ${state.ppage + 1}/${pages}`, disabled: state.ppage === 0,
                                onclick: () => { state.ppage--; render(); } }) : null,
     pages > 1 ? el("button", { class: "ghost", text: "›", disabled: state.ppage >= pages - 1,
                                onclick: () => { state.ppage++; render(); } }) : null));
   if (!state.notice && !writing()) status("● = RUNS ON THE ROUTER");
+}
+
+// --- the master clock: tempo and start/stop, sent to the units by the router
+
+const clockOf = () => (state.router && state.router.clock) || null;
+const clockButtonText = () => {
+  const c = clockOf();
+  return c && c.running ? `CLOCK ${c.bpm} ▶` : "CLOCK";
+};
+
+// Tempo and targets are only a file edit, so they apply at once and need no dialog. START makes
+// every target unit's sequencer run, so it confirms; STOP does not.
+async function setClock(change, okText) {
+  try {
+    const res = await postJson("/api/router/clock", change);
+    state.router.clock = Object.assign({}, state.router.clock, res.clock);
+    state.rsig = JSON.stringify(state.router);
+    if (okText) status(okText);
+  } catch (err) {
+    state.notice = true;
+    status(`CLOCK NOT CHANGED: ${err.message}`);
+  }
+  render();
+}
+
+function clockLine(c) {
+  if (c.error) return `CLOCK FILE PROBLEM: ${c.error}`.toUpperCase();
+  const who = c.targets.length ? c.targets.map(slotLabel).join(" ") : "EVERY UNIT";
+  const bits = [`${c.bpm} BPM`, c.running ? "RUNNING" : "STOPPED", `TO ${who}`];
+  if (!state.router.router.running) bits.push("ROUTER NOT RUNNING: NOTHING IS SENT");
+  return bits.join(" · ");
+}
+
+function renderClock(screen) {
+  const c = clockOf();
+  if (!c) { state.view = "routes"; render(); return; }
+  const nudge = (d) => () => setClock({ bpm: Math.max(c.min, Math.min(c.max, Math.round((c.bpm + d) * 10) / 10)) });
+  const row = el("div", { class: "actions" });
+  for (const d of [-10, -1, 1, 10]) {
+    row.append(el("button", { class: "ghost", text: d > 0 ? `+${d}` : `−${-d}`, disabled: writing(), onclick: nudge(d) }));
+  }
+  const pick = el("div", { class: "pick4" });
+  for (const s of state.router.slots) {
+    const on = c.targets.length === 0 || c.targets.includes(s.slot);
+    pick.append(el("button", { class: "fwrow" + (on ? " selected" : ""), text: `${on ? "✓ " : ""}${s.label}`, disabled: writing(),
+      onclick: () => {
+        // Nothing ticked means every unit; ticking all of them is the same, so it is stored empty.
+        const all = state.router.slots.map((x) => x.slot);
+        const now = c.targets.length ? c.targets : all;
+        let next = now.includes(s.slot) ? now.filter((x) => x !== s.slot) : now.concat(s.slot);
+        if (!next.length) return; // at least one unit must stay ticked
+        if (next.length === all.length) next = [];
+        setClock({ targets: next });
+      } }));
+  }
+  screen.append(
+    el("div", { class: "fwrow", style: "justify-content:center", text: `TEMPO ${c.bpm} BPM` }), row,
+    el("div", { class: "fwrow", text: "SEND CLOCK TO" }), pick,
+    el("div", { class: "actions" },
+      c.running
+        ? el("button", { class: "danger", text: "STOP", disabled: writing(), onclick: () => setClock({ running: false }, "CLOCK STOPPED.") })
+        : el("button", { class: "primary", text: "START", disabled: writing(), onclick: (ev) => requestClockStart(ev) })));
+  if (!state.notice && !writing()) status(clockLine(c));
+}
+
+function requestClockStart(opener) {
+  const c = clockOf();
+  const who = c.targets.length ? c.targets.map(slotLabel).join(" ") : "every running unit";
+  showConfirm({ action: "router-clock-start", after: "clock" },
+    "START THE CLOCK?", "START", opener,
+    el("div", {}, el("b", { text: `${c.bpm} BPM` }), ` · ${who}`),
+    el("div", { text: "Sends MIDI start, then clock, to those units. Anything on them that follows MIDI clock runs." }),
+    dim("The router must be running. STOP sends MIDI stop."));
 }
 
 function openPatch(name) {
@@ -1356,6 +1465,10 @@ async function performRouter(pend) {
   if (pend.action === "router-activate") {
     await postJson("/api/router/activate", { name: pend.patch, confirm: pend.patch || "stop" });
     return pend.patch ? `${pend.patch} WILL RUN WITHIN A FEW SECONDS.` : "ROUTING STOPPED. THE UNITS ARE FREE.";
+  }
+  if (pend.action === "router-clock-start") {
+    await postJson("/api/router/clock", { running: true, confirm: "clock" });
+    return "CLOCK STARTED.";
   }
   const r = await postJson("/api/router/panic", { confirm: "panic" });
   return `SOUND OFF SENT (${r.sent} MESSAGES).`;
@@ -1689,7 +1802,7 @@ $("#chooser-cancel").addEventListener("click", closeChooser);
 $("#chooser-restore").addEventListener("click", () => chooserChoose("restore"));
 $("#chooser-delete").addEventListener("click", () => chooserChoose("delete"));
 // BACK goes up one level on the routes screens, and to the fleet from everywhere else.
-const BACK_TO = { patch: "routes", routeadd: "patch", routeopt: "routeadd", pname: "routes", ptype: "pname", set: "sets" };
+const BACK_TO = { patch: "routes", clock: "routes", routeadd: "patch", routeopt: "routeadd", pname: "routes", ptype: "pname", set: "sets" };
 $("#back").addEventListener("click", () => {
   state.view = BACK_TO[state.view] || "fleet";
   if (state.view === "patch" && !routerPatch(state.rpatch)) state.view = "routes";
@@ -1710,7 +1823,7 @@ setInterval(async () => {
   if (state.pending) return;
   try {
     if (state.view === "fleet") await loadFleet(true); else await pollPhase();
-    if (["routes", "patch"].includes(state.view)) await refreshRouter();
+    if (["routes", "patch", "clock"].includes(state.view)) await refreshRouter();
     if (["sets", "set"].includes(state.view)) await refreshSets();
     if (pollFails >= 2) status("");
     pollFails = 0;

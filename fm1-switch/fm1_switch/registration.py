@@ -50,7 +50,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 
-from . import guided, mflasher, registry, softkey
+from . import config, guided, mflasher, registry, softkey
 from .units import SLOT_LABELS, SLOTS
 
 
@@ -104,7 +104,7 @@ def diff(before: dict[str, registry.RunningUnit],
 
 
 def wait_for_arrival(before: dict[str, registry.RunningUnit], *,
-                     timeout: float = 120.0, poll: float = 0.4,
+                     timeout: float | None = None, poll: float = 0.4,
                      settle: float = 1.5) -> WatchResult:
     """Block until exactly one new FM-1 appears, then confirm nothing else changed.
 
@@ -116,6 +116,8 @@ def wait_for_arrival(before: dict[str, registry.RunningUnit], *,
     Raises :class:`AttributionError` when the change cannot be pinned to one unit, or
     :class:`TimeoutError` when nothing appears in time.
     """
+    if timeout is None:
+        timeout = float(config.value("register_wait"))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         now = snapshot()

@@ -38,7 +38,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import mflasher, registry, softkey
+from . import config, mflasher, registry, softkey
+from .units import SLOT_LABELS
 
 
 class WriteRefused(Exception):
@@ -123,14 +124,21 @@ def _soft_key_ports(unit_id: str) -> list[str]:
 
 def flash(unit_id: str, package: str, *, lock, on_phase: Callable[[str], None] = lambda s: None,
           firmware_label: str | None = None, writer=None, before_write=None,
-          timeout: float = 25.0, settle: float = 3.0, poll: float = 0.5,
-          boot_timeout: float = 60.0,
+          timeout: float | None = None, settle: float | None = None, poll: float = 0.5,
+          boot_timeout: float | None = None,
           sleep: Callable[[float], None] = time.sleep,
           clock: Callable[[], float] = time.monotonic) -> Outcome:
     if not looks_like_flash_id(unit_id):
         raise WriteRefused(
             "this unit has no readable flash id, so it cannot be told apart from its "
             "neighbours. Register it first (power it off, then on alone).")
+    # None means "what the settings say" (download_mode_wait, download_mode_settle, boot_wait).
+    if timeout is None:
+        timeout = float(config.value("download_mode_wait"))
+    if settle is None:
+        settle = float(config.value("download_mode_settle"))
+    if boot_timeout is None:
+        boot_timeout = float(config.value("boot_wait"))
     if not lock.acquire(blocking=False):
         raise Busy("another flash is already running")
     try:
@@ -230,7 +238,7 @@ def _flash_locked(unit_id, package, on_phase, timeout, settle, poll, sleep, cloc
 
 
 def restart_unit(unit_id: str, *, lock, on_phase: Callable[[str], None] | None = None,
-                 boot_timeout: float = 30.0, poll: float = 0.5,
+                 boot_timeout: float | None = None, poll: float = 0.5,
                  sleep: Callable[[float], None] = time.sleep,
                  clock: Callable[[], float] = time.monotonic) -> Outcome:
     """Return a unit that is sitting in download mode to running firmware.
@@ -242,6 +250,8 @@ def restart_unit(unit_id: str, *, lock, on_phase: Callable[[str], None] | None =
     a flash: firmware changed by anything else (another tool, another developer) leaves the
     registry's fingerprint stale, and without this the unit stays "?" however often it is
     restarted. Metadata only; a failed re-learn does not fail the restart."""
+    if boot_timeout is None:
+        boot_timeout = float(config.value("restart_boot_wait"))
     if not looks_like_flash_id(unit_id):
         raise WriteRefused("this unit has no readable flash id.")
     if not lock.acquire(blocking=False):
@@ -266,6 +276,154 @@ def restart_unit(unit_id: str, *, lock, on_phase: Callable[[str], None] | None =
     finally:
         registry.forget_identities()
         lock.release()
+
+
+@dataclass
+class ReconcileOutcome:
+    """What a reconcile found. Metadata only: nothing was written to any unit's flash."""
+
+    matched: list[tuple[str, str, str]] = field(default_factory=list)  # (slot, unit_id, port)
+    unregistered: list[str] = field(default_factory=list)   # flash ids no sticker owns
+    missing: list[str] = field(default_factory=list)        # slots whose unit was not found
+    stuck: list[str] = field(default_factory=list)          # ids/nodes still in download mode
+    no_midi: list[str] = field(default_factory=list)        # ports needing a power cycle
+    message: str = ""
+
+
+def reconcile(*, lock, everything: bool = False,
+              on_phase: Callable[[str], None] | None = None,
+              timeout: float | None = None, settle: float | None = None,
+              boot_timeout: float | None = None, poll: float = 0.5,
+              sleep: Callable[[float], None] = time.sleep,
+              clock: Callable[[], float] = time.monotonic) -> ReconcileOutcome:
+    """Put every registered sticker back on the unit that wears it, after a reconnect.
+
+    After the cables move (or a hub is swapped) the registry's saved ports and running
+    fingerprints are stale, and running units that look alike (same firmware, same
+    ``bcdDevice``) cannot be told apart from USB alone: the letters show "not connected"
+    and the units show as "?". The one thing that CAN tell them apart is the flash id, so:
+
+    1. work out which running units the registry cannot place (the rest are left alone);
+    2. put those into download mode (the soft key; it may take others with it, so every
+       unit that moves is handled, not just the ones asked for);
+    3. read each unit's flash id and match it to its sticker BY ID;
+    4. restart them all and re-learn each one's port and fingerprint, which is what lets
+       the panel place identical-looking units from then on.
+
+    Never binds a new sticker (a flash id nobody owns is reported, and REGISTER stays the
+    deliberate act it is) and never writes flash. A unit already sitting in download mode
+    is not touched: it may be there on purpose.
+
+    ``everything=True`` is the SCAN FLEET button: every running unit is scanned, whether or
+    not the registry thinks it has placed it, so the answer never rests on a guess.
+    """
+    if boot_timeout is None:
+        boot_timeout = float(config.value("restart_boot_wait"))
+    if timeout is None:
+        timeout = float(config.value("download_mode_wait"))
+    if settle is None:
+        settle = float(config.value("download_mode_settle"))
+    if not lock.acquire(blocking=False):
+        raise Busy("a flash is running; wait for it to finish")
+    say = on_phase or (lambda s: None)
+    try:
+        reg = registry.load()
+        runs = registry.running()
+        paired = registry._match_running(reg, runs, set())
+        # A look-alike unit placed only by its last-seen port is a guess once it has
+        # re-enumerated (power cycle, moved cable): treat those as unmatched too.
+        doubtful = {id(r) for r in registry.unproven_runs(reg, runs, paired)}
+        paired = [(r, b) for r, b in paired if id(r) not in doubtful]
+        placed = {id(r) for r, _ in paired}
+        lost = list(runs) if everything else [r for r in runs if id(r) not in placed]
+        out = ReconcileOutcome()
+        if not lost:
+            out.message = ("every running unit is already matched to its sticker"
+                           if runs else "no running units to match")
+            return out
+        out.no_midi = [r.port for r in lost if not r.has_midi]
+        targets = [r.port for r in lost if r.has_midi]
+        if not targets:
+            raise WriteRefused(
+                "no unmatched unit has a MIDI link to carry the download-mode key. "
+                "Power-cycle the units, or put them into download mode and use REGISTER.")
+
+        say("Putting the unmatched units into download mode…")
+        before_ports = {d.port for d in download_devices()}
+        moved: list[Device] = []
+        key_error: Exception | None = None
+        for port in targets:
+            if any(d.port == port for d in moved) or softkey.port_ids(port) in softkey.DOWNLOAD_IDS:
+                continue                 # an earlier key (it may be a broadcast) took this one
+            try:
+                softkey.soft_key(port)
+            except (softkey.NoSuchPort, softkey.NoMidiInterface) as exc:
+                key_error = exc
+                continue
+            moved += _wait_for_new(before_ports | {d.port for d in moved},
+                                   timeout, settle, poll, sleep, clock)
+        if not moved:
+            raise WriteRefused(
+                "no unit entered download mode, so nothing was matched"
+                + (f" ({key_error})" if key_error else "")
+                + ". Power-cycle the units and try again.")
+
+        say("Identifying units…")
+        ids = {d: read_id(d) for d in moved}
+        bound = {b.unit_id: b.slot for b in reg.units.values() if b.unit_id}
+
+        say("Restarting the units…")
+        back: list[tuple[Device, str | None]] = []
+        for dev, ident in ids.items():
+            try:
+                mflasher.restart(dev.node)
+                back.append((dev, ident))
+            except mflasher.MflasherError:
+                out.stuck.append(ident or dev.node)
+
+        say("Re-registering the units…")
+        found: set[str] = set()
+        for dev, ident in back:
+            if not ident or not looks_like_flash_id(ident):
+                out.unregistered.append(f"port {dev.port}")
+                continue
+            if ident not in bound:
+                out.unregistered.append(ident)
+                continue
+            result = _relearn(ident, dev.port, None, boot_timeout, poll, sleep, clock)
+            if result in ("ok", "shared"):
+                out.matched.append((bound[ident], ident, dev.port))
+                found.add(bound[ident])
+            else:
+                out.stuck.append(ident)
+        already = set() if everything else {b.slot for _, b in paired}      # placed before we started: not "missing"
+        out.missing = [s for s in sorted(reg.units) if s not in found and s not in already
+                       and reg.units[s].unit_id not in set(out.stuck)]
+        out.matched.sort()
+        out.message = _reconcile_message(out)
+        return out
+    finally:
+        registry.forget_identities()
+        lock.release()
+
+
+def _reconcile_message(out: ReconcileOutcome) -> str:
+    def letter(slot: str) -> str:
+        return SLOT_LABELS.get(slot, slot)
+    parts = []
+    if out.matched:
+        parts.append("matched " + " ".join(letter(s) for s, _, _ in out.matched))
+    if out.missing:
+        parts.append("not found: " + " ".join(letter(s) for s in out.missing)
+                     + " (off, unplugged, or not reachable)")
+    if out.unregistered:
+        parts.append(f"{len(out.unregistered)} unit(s) with no sticker; use REGISTER")
+    if out.stuck:
+        parts.append("could not restart or re-identify: " + ", ".join(out.stuck)
+                     + " (power-cycle them)")
+    if out.no_midi:
+        parts.append("power-cycle the unit(s) on " + ", ".join(out.no_midi))
+    return "; ".join(parts) or "nothing matched"
 
 
 def _relearn(unit_id, port, label, timeout, poll, sleep, clock) -> str:

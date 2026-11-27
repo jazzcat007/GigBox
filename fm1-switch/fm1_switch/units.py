@@ -17,10 +17,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import path_setting, unit_count
+from . import config
+from .config import unit_count
 
 # Standard slot names, in cabling order. fm1-a..d map to hub/port paths via udev.
-# The count comes from the config file (default 4, at most 8): see config.py.
+# The count comes from the config file (default 4, at most 16): see config.py.
 SLOTS: tuple[str, ...] = tuple(f"fm1-{chr(97 + i)}" for i in range(unit_count()))
 
 # A nice human label per slot, so the TUI can say "unit C" instead of "fm1-c".
@@ -72,7 +73,7 @@ def candidates(slots: tuple[str, ...] = SLOTS) -> list[str]:
 
 def port_map_path() -> Path:
     """Where ``label-units.sh`` / the operator records slot -> USB port. Best effort."""
-    return path_setting("FM1_PORTMAP", "portmap", "~/fm1-portmap.txt")
+    return config.path("portmap")
 
 
 def read_port_map() -> dict[str, str]:

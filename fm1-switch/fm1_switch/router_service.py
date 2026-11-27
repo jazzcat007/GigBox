@@ -24,13 +24,22 @@ import time
 from pathlib import Path
 from typing import Callable, Protocol
 
+from . import clock as clocklib
 from . import router
 from .alsa_seq import SysexAssembler
-from .config import path_setting
+from . import config
 
-HOLD_DEFAULT_TTL = 300.0
-#: The status file is "fresh" (a router is running) when it is newer than this.
-STATUS_FRESH = 3.0
+
+
+#: Devices that are not FM-1s but can be routed: ``{route key: ALSA client name}``. They are
+#: found by the sequencer client's name, not a sticker, and are never flashed, so they have
+#: no registry entry. They are left out of the master clock's default targets and out of
+#: panic: the router only sends them what a route explicitly names.
+EXTERNAL_DEVICES: dict[str, str] = {"oxi": "OXI ONE"}
+
+
+def is_external(key: str) -> bool:
+    return key in EXTERNAL_DEVICES
 
 
 class Backend(Protocol):
@@ -43,11 +52,11 @@ class Backend(Protocol):
 # ------------------------------------------------------------------------------ files
 
 def holds_path() -> Path:
-    return path_setting("FM1_ROUTER_HOLDS", "router_holds", "~/fm1-router-holds.json")
+    return config.path("router_holds")
 
 
 def status_path() -> Path:
-    return path_setting("FM1_ROUTER_STATUS", "router_status", "~/fm1-router-status.json")
+    return config.path("router_status")
 
 
 def _write_json(path: Path, body: dict) -> None:
@@ -92,8 +101,10 @@ def _locked_update(path: Path, change: Callable[[dict], None]) -> None:
         _write_json(path, data)
 
 
-def place_hold(keys, ttl: float = HOLD_DEFAULT_TTL, path: Path | None = None) -> None:
+def place_hold(keys, ttl: float | None = None, path: Path | None = None) -> None:
     """Ask the router to let go of these unit keys for ``ttl`` seconds."""
+    if ttl is None:
+        ttl = float(config.value("hold_ttl"))
     expiry = time.time() + ttl
 
     def change(d: dict) -> None:
@@ -112,10 +123,10 @@ def clear_hold(keys, path: Path | None = None) -> None:
 def router_running(now: float | None = None, path: Path | None = None) -> bool:
     now = time.time() if now is None else now
     stamp = _read_json(path or status_path()).get("updated")
-    return isinstance(stamp, (int, float)) and now - stamp < STATUS_FRESH
+    return isinstance(stamp, (int, float)) and now - stamp < float(config.value("status_fresh"))
 
 
-def hold_and_wait(keys, *, ttl: float = HOLD_DEFAULT_TTL, timeout: float = 5.0,
+def hold_and_wait(keys, *, ttl: float | None = None, timeout: float = 5.0,
                   poll: float = 0.1, hpath: Path | None = None,
                   spath: Path | None = None) -> bool:
     """Place a hold and wait until the router has released every key.
@@ -148,7 +159,7 @@ class released_for_soft_key:
     the hold off again. It does nothing, and writes nothing, when no router is running, and
     it never raises: a router problem must not stand between the operator and a unit."""
 
-    def __init__(self, ttl: float = 60.0, timeout: float = 5.0):
+    def __init__(self, ttl: float | None = None, timeout: float = 5.0):
         self.ttl, self.timeout, self.active = ttl, timeout, False
 
     def __enter__(self):
@@ -172,7 +183,7 @@ class released_for_soft_key:
 # ------------------------------------------------------------------------ active patch
 
 def active_path() -> Path:
-    return path_setting("FM1_ROUTER_ACTIVE", "router_active", "~/fm1-router-active.json")
+    return config.path("router_active")
 
 
 def read_active(path: Path | None = None) -> str | None:
@@ -229,13 +240,50 @@ class PatchFollower:
         return found
 
 
+class ClockFollower:
+    """What ``route run`` asks for changed master-clock settings: the file is read when it
+    changes. An unreadable file keeps the settings that are running."""
+
+    def __init__(self, log: Callable[[str], None] = lambda s: None, path: Path | None = None):
+        self.log, self.path = log, path
+        self._seen: object = object()
+
+    def _file(self) -> Path:
+        return self.path or clocklib.clock_path()
+
+    def start_stopped(self) -> None:
+        """A router that starts does not start the units' sequencers: if the file says the
+        clock was running, it is switched off first."""
+        try:
+            st = clocklib.load(self.path)
+            if st.running:
+                clocklib.save(clocklib.ClockSettings(st.bpm, False, st.targets), self.path)
+                self.log("clock was left running; starting stopped")
+        except (clocklib.ClockError, OSError) as e:
+            self.log(f"clock file unusable at start: {e}")
+
+    def __call__(self) -> clocklib.ClockSettings | None:
+        try:
+            stamp = self._file().stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        if stamp == self._seen:
+            return None
+        self._seen = stamp
+        try:
+            return clocklib.load(self.path)
+        except clocklib.ClockError as e:
+            self.log(f"clock file unusable, keeping the current clock: {e}")
+            return None
+
+
 def panic_all(backend: Backend, resolve: Callable[[], dict[str, int]],
               log: Callable[[str], None] = lambda s: None) -> int:
     """Send every channel sound-off, reset and notes-off to every running unit the registry
     can name, whatever the patch. Attaches and lets go again; returns the messages sent."""
     svc = RouterService(backend, resolve, lambda: set(), log)
     svc.publish = False
-    svc.always = set(resolve())
+    svc.always = {k for k in resolve() if not is_external(k)}
     svc.refresh()
     try:
         return svc.panic()
@@ -270,6 +318,9 @@ class RouterService:
         self.dropped_to_missing = 0
         #: False for a one-shot helper (panic): it must not overwrite a running router's status.
         self.publish = True
+        #: The master clock (tempo and transport sent to the units). Idle until applied.
+        self.clock = clocklib.MasterClock()
+        self._clock_errors: set[str] = set()
 
     def set_patch(self, patch: router.Patch) -> None:
         self.patch = patch
@@ -283,8 +334,10 @@ class RouterService:
             self._present = self.resolve()
         present = self._present
         holds = self.holds()
-        self.held = set(self.patch.ports()) if ALL_UNITS in holds else holds & self.patch.ports()
-        wanted = (self.patch.ports() | self.always) - self.held
+        clock_ports = self._clock_ports(present)
+        used = self.patch.ports() | clock_ports
+        self.held = set(used) if ALL_UNITS in holds else holds & used
+        wanted = (used | self.always) - self.held
         for key in list(self.attached):
             client = self.attached[key]
             if key not in wanted or present.get(key) != client:
@@ -306,6 +359,63 @@ class RouterService:
             self.attached[key] = client
             self.log(f"attached {key} (client {client})")
         self._write_status()
+
+    def _clock_ports(self, present: dict[str, int]) -> set[str]:
+        """The units the running clock must reach: its targets, or every unit present."""
+        st = self.clock.settings
+        if not st.running:
+            return set()
+        return set(st.targets) if st.targets else {k for k in present if not is_external(k)}
+
+    def apply_clock(self, settings: clocklib.ClockSettings) -> None:
+        """Follow new clock settings. START goes to the targets once they are attached; STOP
+        goes out before they are let go. A unit added to or dropped from the targets while the
+        clock runs is started or stopped on its own."""
+        old = self.clock.settings
+        byte = self.clock.set(settings)
+        if byte == clocklib.START:
+            self.refresh(rescan=False)
+            self._send_realtime(byte, self._clock_keys(settings))
+        elif byte == clocklib.STOP:
+            self._send_realtime(byte, self._clock_keys(old))
+            self.refresh(rescan=False)
+        elif settings.running and settings.targets != old.targets:
+            before = self._clock_keys(old)
+            after = self._clock_keys(settings)
+            self._send_realtime(clocklib.STOP, before - after)  # still attached: stop first
+            self.refresh(rescan=False)
+            after = self._clock_keys(settings)  # newly attached units count now
+            self._send_realtime(clocklib.START, after - before)
+        else:
+            self.refresh(rescan=False)
+        self.log(f"clock: {settings.bpm:g} BPM, {'running' if settings.running else 'stopped'}"
+                 + (f", to {', '.join(settings.targets)}" if settings.targets else ""))
+
+    def _clock_keys(self, settings: clocklib.ClockSettings) -> set[str]:
+        keys = set(self.attached)
+        return keys & set(settings.targets) if settings.targets else {
+            k for k in keys if not is_external(k)}
+
+    def _send_realtime(self, byte: int, keys) -> None:
+        for key in sorted(keys):
+            client = self.attached.get(key)
+            if client is None:
+                continue
+            try:
+                self.backend.send(client, bytes([byte]))
+            except Exception as e:
+                if key not in self._clock_errors:
+                    self._clock_errors.add(key)
+                    self.log(f"clock to {key} failed: {e}")
+
+    def tick(self) -> int:
+        """Send the clock ticks that are due. Returns how many ticks went out."""
+        n = self.clock.due()
+        if n:
+            keys = self._clock_keys(self.clock.settings)
+            for _ in range(n):
+                self._send_realtime(clocklib.CLOCK, keys)
+        return n
 
     def _detach(self, key: str) -> None:
         client = self.attached.pop(key)
@@ -344,6 +454,8 @@ class RouterService:
     def panic(self) -> int:
         n = 0
         for key, client in self.attached.items():
+            if is_external(key):
+                continue
             for msg in router.panic_messages():
                 try:
                     self.backend.send(client, msg)
@@ -356,6 +468,8 @@ class RouterService:
     def status(self) -> dict:
         return {"patch": self.patch.name, "attached": sorted(self.attached),
                 "missing": sorted(self.missing), "held": sorted(self.held),
+                "clock": {**self.clock.settings.to_dict(), "ticks": self.clock.ticks_sent,
+                          "dropped": self.clock.dropped},
                 "updated": time.time()}
 
     def _write_status(self) -> None:
@@ -368,13 +482,19 @@ class RouterService:
 
     def run(self, stop: threading.Event, rescan_every: float = 2.0,
             holds_every: float = 0.2,
-            reload: Callable[[], router.Patch | None] | None = None) -> None:
+            reload: Callable[[], router.Patch | None] | None = None,
+            clock: Callable[[], clocklib.ClockSettings | None] | None = None) -> None:
         """Route until ``stop`` is set. ``reload`` is asked on every rescan for a changed
-        patch (None means unchanged), so editing the patch file takes effect while running."""
+        patch (None means unchanged), so editing the patch file takes effect while running.
+        ``clock`` is asked on every holds check for changed master-clock settings, and the
+        ticks are sent from this loop, so ALSA is only ever used from one thread."""
         last_scan = last_holds = 0.0
         try:
             while not stop.is_set():
                 now = time.monotonic()
+                new_clock = clock() if clock and now - last_holds >= holds_every else None
+                if new_clock is not None:
+                    self.apply_clock(new_clock)
                 if now - last_scan >= rescan_every:
                     new = reload() if reload else None
                     if new is not None:
@@ -385,13 +505,30 @@ class RouterService:
                 elif now - last_holds >= holds_every:
                     self.refresh(rescan=False)
                     last_holds = now
-                self.pump(0.05)
+                self.tick()
+                self.pump(self.clock.wait(0.05))
         finally:
+            if self.clock.running:  # leave no unit waiting on a clock that has gone
+                self._send_realtime(clocklib.STOP, self._clock_keys(self.clock.settings))
             self.release_all()
             try:
                 (self.status_file or status_path()).unlink()
             except OSError:
                 pass
+
+
+def external_clients(aconnect: str) -> dict[str, int]:
+    """``{key: ALSA client}`` for each external device (:data:`EXTERNAL_DEVICES`) that is
+    plugged in. A name seen twice is skipped: two of one device cannot be told apart by name,
+    and guessing would send notes to the wrong box."""
+    import re
+
+    found: dict[str, list[int]] = {}
+    for client, name in re.findall(r"client (\d+): '([^']*)' \[type=kernel", aconnect):
+        for key, wanted in EXTERNAL_DEVICES.items():
+            if name.strip() == wanted:
+                found.setdefault(key, []).append(int(client))
+    return {k: v[0] for k, v in found.items() if len(v) == 1}
 
 
 def registry_resolver() -> Callable[[], dict[str, int]]:
@@ -416,6 +553,7 @@ def registry_resolver() -> Callable[[], dict[str, int]]:
             client = maker_install.alsa_client_for_usb_path(port, text)
             if client is not None:
                 out[slot] = client
+        out.update(external_clients(text))
         return out
 
     return resolve

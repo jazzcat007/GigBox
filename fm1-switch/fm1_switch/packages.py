@@ -48,6 +48,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import config
+
 SECTOR = 0x1000
 BOOT_AREA = 0x4000
 FLASH_SIZE = 0x100000
@@ -347,13 +349,11 @@ class _Cache:
     """
 
     def __init__(self) -> None:
-        raw = os.environ.get("FM1_INSPECT_CACHE")
-        # expanduser() on BOTH branches. The default is a "~" string too, and leaving it
-        # unexpanded made the cache land in a literal "./~" directory instead of $HOME,
+        # config.path() expands the "~" (the default is a "~" string too). Leaving it
+        # unexpanded once made the cache land in a literal "./~" directory instead of $HOME,
         # so it never loaded and every request re-parsed every package (~8 s each on a
         # Pi 3B+, which turned the library page into a two-minute wait).
-        default = Path("~/fm1-hub/inspect.json").expanduser()
-        self.path = Path(raw).expanduser() if raw else default
+        self.path = config.path("inspect_cache")
         self.data: dict[str, dict] = {}
         self._loaded = False
         #: Guards ``data`` and the file write (audit PKG-01). Requests are threaded.

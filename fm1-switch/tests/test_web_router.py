@@ -21,6 +21,7 @@ def files(tmp_path, monkeypatch):
     monkeypatch.setenv("FM1_PATCHES", str(tmp_path / "patches.json"))
     monkeypatch.setenv("FM1_ROUTER_STATUS", str(tmp_path / "status.json"))
     monkeypatch.setenv("FM1_ROUTER_ACTIVE", str(tmp_path / "active.json"))
+    monkeypatch.setenv("FM1_CLOCK", str(tmp_path / "clock.json"))
     monkeypatch.setenv("FM1_ROUTER_HOLDS", str(tmp_path / "holds.json"))
     monkeypatch.setenv("FM1_FLASHLOG", str(tmp_path / "flash.log"))
     return tmp_path
@@ -240,3 +241,46 @@ def test_panic_endpoint_is_refused_while_a_write_runs(srv, monkeypatch):
     finally:
         web.APP.lock.release()
     assert code == 409 and "write is running" in body["error"]
+
+
+# ------------------------------------------------------------------------------- clock
+
+def test_the_overview_carries_a_calm_default_clock(srv):
+    clock = get(srv, "/api/router")[1]["clock"]
+    assert clock["bpm"] == 120.0 and clock["running"] is False and clock["targets"] == []
+    assert clock["live"] is None and clock["error"] == ""
+
+
+def test_tempo_and_targets_change_without_a_confirmation_and_are_saved(srv, files):
+    code, body = post(srv, "/api/router/clock", {"bpm": 97.5, "targets": ["fm1-b", "fm1-a"]})
+    assert code == 200 and body["clock"]["bpm"] == 97.5
+    assert json.loads((files / "clock.json").read_text()) == {
+        "bpm": 97.5, "running": False, "targets": ["fm1-a", "fm1-b"]}
+
+
+def test_starting_the_clock_needs_the_confirmation_and_stopping_does_not(srv, files):
+    assert post(srv, "/api/router/clock", {"running": True})[0] == 409
+    assert post(srv, "/api/router/clock", {"running": True, "confirm": "nope"})[0] == 409
+    assert not (files / "clock.json").exists()
+    assert post(srv, "/api/router/clock", {"running": True, "confirm": "clock"})[0] == 200
+    assert json.loads((files / "clock.json").read_text())["running"] is True
+    assert post(srv, "/api/router/clock", {"running": False})[0] == 200
+    assert json.loads((files / "clock.json").read_text())["running"] is False
+
+
+@pytest.mark.parametrize("body", [
+    {"bpm": 5}, {"bpm": "fast"}, {"bpm": True}, {"targets": ["fm1-z"]}, {"targets": "fm1-a"},
+    {"running": "yes"},
+])
+def test_a_bad_clock_request_is_refused_and_nothing_is_saved(srv, files, body):
+    code, resp = post(srv, "/api/router/clock", body)
+    assert code == 409 and resp["error"]
+    assert not (files / "clock.json").exists()
+
+
+def test_the_overview_shows_what_a_running_router_reports(srv, files):
+    (files / "status.json").write_text(json.dumps({
+        "updated": __import__("time").time(), "patch": "idle", "attached": ["fm1-a"],
+        "clock": {"bpm": 97.5, "running": True, "targets": [], "ticks": 123, "dropped": 0}}))
+    live = get(srv, "/api/router")[1]["clock"]["live"]
+    assert live == {"bpm": 97.5, "running": True, "targets": []}  # no tick counter: no churn

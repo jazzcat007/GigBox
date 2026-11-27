@@ -28,7 +28,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import path_setting
+from . import config
 
 # ---------------------------------------------------------------------------- messages
 
@@ -89,6 +89,10 @@ class Route:
     block: tuple[str, ...] = ()
     # Send every channel message out on this channel (1..16), or None to keep each one's own.
     remap_to: int | None = None
+    # Move every channel message up or down by this many channels (-15..15), so a block of
+    # source channels 5-8 can land on a unit that listens on 1-4 (shift -4). A message that
+    # would leave 1..16 is dropped, never wrapped. Not combined with remap_to.
+    shift: int = 0
     transpose: int = 0  # semitones, -48..48, notes only
     velocity_scale: float = 1.0  # 0.1..2.0, note-on velocity only
     low_note: int = 0  # note range let through, inclusive
@@ -106,6 +110,9 @@ class Route:
                 raise RouteError(f"unknown kind {k!r} in block; choose from {', '.join(KINDS)}")
         if self.remap_to is not None:
             _int_in("remap_to", self.remap_to, 1, 16)
+        _int_in("shift", self.shift, -15, 15)
+        if self.shift and self.remap_to is not None:
+            raise RouteError("use either remap_to or shift on one route, not both")
         _int_in("transpose", self.transpose, -48, 48)
         if isinstance(self.velocity_scale, bool) or not isinstance(
             self.velocity_scale, (int, float)
@@ -148,7 +155,9 @@ class Route:
             is_on = (status & 0xF0) == NOTE_ON and data[1] > 0
             if is_on and self.velocity_scale != 1.0:
                 data[1] = max(1, min(127, round(data[1] * self.velocity_scale)))
-        out_channel = self.remap_to if self.remap_to is not None else channel
+        out_channel = self.remap_to if self.remap_to is not None else channel + self.shift
+        if not 1 <= out_channel <= 16:
+            return None
         return bytes([(status & 0xF0) | (out_channel - 1), *data])
 
     def to_dict(self) -> dict:
@@ -159,6 +168,8 @@ class Route:
             d["block"] = list(self.block)
         if self.remap_to is not None:
             d["remap_to"] = self.remap_to
+        if self.shift:
+            d["shift"] = self.shift
         if self.transpose:
             d["transpose"] = self.transpose
         if self.velocity_scale != 1.0:
@@ -172,7 +183,7 @@ class Route:
         if not isinstance(raw, dict):
             raise RouteError("a route must be an object")
         known = {
-            "source", "dest", "channels", "block", "remap_to", "transpose",
+            "source", "dest", "channels", "block", "remap_to", "shift", "transpose",
             "velocity_scale", "low_note", "high_note",
         }
         extra = set(raw) - known
@@ -187,7 +198,7 @@ class Route:
         return cls(
             source=raw["source"], dest=raw["dest"],
             channels=tuple(raw.get("channels", ())), block=tuple(raw.get("block", ())),
-            remap_to=raw.get("remap_to"), transpose=raw.get("transpose", 0),
+            remap_to=raw.get("remap_to"), shift=raw.get("shift", 0), transpose=raw.get("transpose", 0),
             velocity_scale=raw.get("velocity_scale", 1.0),
             low_note=raw.get("low_note", 0), high_note=raw.get("high_note", 127),
         )
@@ -249,7 +260,7 @@ class Patch:
 # ------------------------------------------------------------------------------ patch store
 
 def store_path() -> Path:
-    return path_setting("FM1_PATCHES", "patches", "~/fm1-patches.json")
+    return config.path("patches")
 
 
 @dataclass

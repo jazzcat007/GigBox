@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import guided, hub, library, registration, registry, web_router, web_sets
+from . import config, guided, hub, library, registration, registry, web_router, web_sets
 from .backups import backup_space, backups_for
 from .guided import WriteRefused
 from .security import (_TOKEN_HEADER, Throttle, _host_name, _is_loopback_client, _origin_host,
@@ -194,8 +194,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_register_scan()
         if path == "/api/flashlog":
             return self._json({"items": recent_flashes()})
+        if path == "/api/settings":
+            return self._json(config.describe())
         if path == "/api/router":
             return self._json(web_router.overview())
+        if path == "/api/router/layouts":
+            return self._json(web_router.layouts_overview())
         if path == "/api/sets":
             return self._json(web_sets.overview())
         if path == "/api/sets/preflight":
@@ -235,6 +239,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_restore(body)
             if path == "/api/restart":
                 return self._api_restart(body)
+            if path == "/api/reconcile":
+                return self._api_reconcile(body)
             if path == "/api/backup":
                 return self._json({"ok": True, "event": backup_unit_now(
                     str(body.get("unit_id") or ""), str(body.get("confirm") or ""))})
@@ -268,6 +274,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_catalog({})
             if path == "/api/library/remove":
                 return self._api_library_remove(body)
+            if path == "/api/settings":
+                return self._api_settings(body)
             if path.startswith("/api/router/"):
                 return self._api_router(path, body)
             if path.startswith("/api/sets/"):
@@ -511,6 +519,46 @@ class Handler(BaseHTTPRequestHandler):
         _log_flash(event="restart", unit_id=unit_id, device=out.device, message=out.message)
         self._json({"ok": True, "message": out.message})
 
+    def _api_reconcile(self, body: dict) -> None:
+        """Match every registered sticker to its unit again after a reconnect: the units the
+        registry cannot place are put into download mode, read by flash id, restarted and
+        their port and fingerprint re-learned. Metadata only; never writes flash."""
+        if str(body.get("confirm") or "") != "reconcile":
+            raise WriteRefused("confirmation does not match the request")
+        def phase(text: str) -> None:
+            with APP.state_lock:
+                APP.busy = text
+        try:
+            out = guided.reconcile(lock=APP.lock, on_phase=phase, everything=bool(body.get("all")))
+        finally:
+            if APP.lock.acquire(blocking=False):
+                with APP.state_lock:
+                    APP.busy = None
+                APP.lock.release()
+        _log_flash(event="reconcile", message=out.message,
+                   matched=[s for s, _, _ in out.matched])
+        self._json({"ok": True, "message": out.message,
+                    "matched": [{"slot": s, "unit_id": i, "port": p} for s, i, p in out.matched],
+                    "unregistered": out.unregistered, "missing": out.missing,
+                    "stuck": out.stuck})
+
+    def _api_settings(self, body: dict) -> None:
+        """Change settings in the config file. ``{"values": {key: value-or-null}}``; null
+        puts a key back to its default. All or nothing, and every change leaves an audit
+        line. Nothing here touches a unit; what a setting can reach is decided in
+        ``config`` (the flasher binary and the hub address are refused from here)."""
+        values = body.get("values")
+        try:
+            result = config.save(values if isinstance(values, dict) else {})
+        except config.ConfigError as exc:
+            _log_flash(event="refused", stage="request", endpoint="/api/settings",
+                       message=str(exc))
+            return self._error(HTTPStatus.CONFLICT, str(exc))
+        if result["changed"]:
+            _log_flash(event="settings", message=", ".join(
+                f"{k}: {old} -> {new}" for k, (old, new) in result["changed"].items()))
+        return self._json({"ok": True, **result, **config.describe()})
+
     def _api_router(self, path: str, body: dict) -> None:
         """The routes page. Edits the saved patches and the choice of active patch (files the
         router follows); panic sends all-notes-off. Nothing here writes to a unit's flash."""
@@ -527,6 +575,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/router/activate":
             web_router.activate(text("name"), text("confirm"))
             return self._json({"ok": True})
+        if path == "/api/router/layouts/units":
+            web_router.save_units(body.get("units"))
+            return self._json({"ok": True, **web_router.layouts_overview()})
+        if path == "/api/router/layouts/save":
+            web_router.save_layout(body.get("layout"))
+            return self._json({"ok": True, **web_router.layouts_overview()})
+        if path == "/api/router/layouts/delete":
+            web_router.delete_layout(text("name"), text("confirm"))
+            return self._json({"ok": True, **web_router.layouts_overview()})
+        if path == "/api/router/layouts/apply":
+            patch = web_router.apply_layout(text("name"), text("confirm"))
+            return self._json({"ok": True, "patch": patch, **web_router.layouts_overview()})
+        if path == "/api/router/clock":
+            return self._json({"ok": True, "clock": web_router.set_clock(
+                {**body, "confirm": text("confirm")})})
         if path == "/api/router/panic":
             # Not while a flash runs: the units are in download mode or about to be.
             if not APP.lock.acquire(blocking=False):

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import hub, library, mflasher, packages, registry
-from .config import path_setting
+from . import config
 from .units import SLOTS, SLOT_LABELS, enumerate_units
 
 
@@ -23,7 +23,7 @@ STATIC_DIR = Path(__file__).parent / "web"
 
 
 def port_map_path() -> Path:
-    return path_setting("FM1_PORTMAP", "portmap", "~/fm1-portmap.txt")
+    return config.path("portmap")
 
 
 # --------------------------------------------------------------------------- state

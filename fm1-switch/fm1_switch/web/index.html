@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>FM-1 fleet</title>
-<link rel="stylesheet" href="/style.css?v=3">
+<link rel="stylesheet" href="/style.css?v=5">
 </head>
 <body>
 
@@ -46,6 +46,28 @@
     <div id="hub" class="cards"></div>
     <p class="note" id="attribution"></p>
   </section>
+
+  <!-- --------------------------------------------------------- channel layout -->
+  <section id="layout-section">
+    <div class="section-head">
+      <h2>Channel layout</h2>
+      <span class="hint" id="layout-hint"></span>
+    </div>
+    <div id="layout"></div>
+  </section>
+
+  <!-- -------------------------------------------------------------- settings -->
+  <section id="settings-section">
+    <div class="section-head">
+      <h2>Settings</h2>
+      <span class="hint" id="settings-hint"></span>
+    </div>
+    <div id="settings"></div>
+    <div class="settings-bar">
+      <button id="settings-save" class="primary" disabled>Save changes</button>
+      <button id="settings-discard" class="ghost" disabled>Discard</button>
+    </div>
+  </section>
 </main>
 
 <!-- ------------------------------------------------------------- modal -->
@@ -57,6 +79,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=3"></script>
+<script src="/app.js?v=5"></script>
 </body>
 </html>

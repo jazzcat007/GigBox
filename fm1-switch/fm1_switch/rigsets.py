@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .config import path_setting
+from . import config
 from .units import SLOTS
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,39}$")
@@ -48,7 +48,7 @@ class SetError(ValueError):
 
 
 def store_path() -> Path:
-    return path_setting("FM1_SETS", "sets", "~/fm1-sets.json")
+    return config.path("sets")
 
 
 # ------------------------------------------------------------------------------ model

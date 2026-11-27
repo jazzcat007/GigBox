@@ -155,6 +155,16 @@ to change.
    "registry": "~/fm1-units.json", "portmap": "~/fm1-portmap.txt", "flasher": "/path/to/m-flasher"}`.
    `units` is 1–8 (stickers A–H; the panel grid widens above 4). The `FM1_*` environment
    variables still win over the file. Restart `fm1-web` after changing it.
+   **Settings page.** Nearly everything else that used to be a constant (timeouts, how long the
+   catalogue stays fresh, how many automatic backups are kept, the starting tempo, how long a
+   flash hold lasts, every data folder and file) is edited from the **Settings** section at
+   the bottom of the web admin (`http://<pi>:8080/index.html`, or `/index.html` headless). It writes
+   the same file; changes apply on the next use, except the few marked "restart to apply". Every
+   change leaves a line in the audit log. Deliberately **not** editable from the website, only
+   in the file or environment: the `m-flasher` program, the maker's installer folder and the
+   hub address (they decide what code runs and where firmware comes from), and the bind address,
+   port, write token and allowed host names (they decide who may write to the units). The
+   schema is one list in `fm1-switch/fm1_switch/config.py`; adding a setting there adds it to the page.
    **Headless (no panel, no screen).** On a Pi Zero 2 W or any small board, skip the kiosk and the panel
    steps below. Install `fm1-switch/systemd/fm1-web-headless.service` to `/etc/systemd/system/`
    (edit `YOUR-USER`), enable it, and open `http://<pi-address>/` on a phone or tablet

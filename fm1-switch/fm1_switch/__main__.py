@@ -23,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import library, mflasher, registry, softkey, units
+from . import config, library, mflasher, registry, softkey, units
 from .units import SLOTS, SLOT_LABELS, enumerate_units
 
 USAGE = """usage:
@@ -46,6 +46,10 @@ USAGE = """usage:
   fm1-switch route run [NAME]   run a patch (the dawless hub router; default patch name
                                 "default"); follows edits to the patch file; Ctrl-C stops it
   fm1-switch route panic        send all-sound-off to every running unit
+  fm1-switch clock [status]     the master clock: tempo, running or stopped, which units
+  fm1-switch clock set BPM | start | stop | targets [fm1-a fm1-b ...]
+                                the running router (route run) sends MIDI clock and
+                                start/stop to the targets (none named: every unit)
   fm1-switch set list|show NAME|delete NAME|check NAME [A,B]
   fm1-switch set save NAME A=PACKAGE B=@backup ...   a rig set: one firmware (or the newest
                                 saved image, @backup) per unit, 1-4 units. Pushing a set
@@ -251,7 +255,7 @@ def cmd_download(args: list[str]) -> int:
         return 1
     print(f"  wrote the soft key to {res.midi_node}")
 
-    if softkey.wait_for_download_mode(port, timeout=20.0):
+    if softkey.wait_for_download_mode(port, timeout=config.value("download_mode_wait")):
         print(f"  ✔ {slot} is in download mode ({port} now reports "
               f"{softkey.port_ids(port)})")
         # Warn honestly: on this hardware one soft-key write has been observed to move
@@ -348,7 +352,7 @@ def cmd_register(args: list[str]) -> int:
     input("Press Enter when only the unit to be labelled is about to be switched on… ")
     print(f"Watching for exactly one new unit (up to 120 s)…", flush=True)
     try:
-        result = registration.wait_for_arrival(before, timeout=120.0)
+        result = registration.wait_for_arrival(before)
     except registration.AttributionError as exc:
         print(f"\nRefused: {exc}", file=sys.stderr)
         return 1
@@ -457,12 +461,68 @@ def cmd_set(args: list[str]) -> int:
     return 2
 
 
+def _cmd_route_layout(args: list[str]) -> int:
+    """``route layout list|show NAME|apply NAME|units UNIT=COUNT[:DEVICE] ...``: the channel
+    layouts (layouts.py). Writes only the layouts, patches and active-patch files."""
+    from . import web_router
+    from .guided import WriteRefused
+
+    usage = ("usage: fm1-switch route layout list|show NAME|apply NAME|"
+             "units [fm1-a=4[:1] fm1-c=1 ...]")
+    sub, rest = (args[0], args[1:]) if args else ("list", [])
+    try:
+        view = web_router.layouts_overview()
+        if view["error"]:
+            print(view["error"], file=sys.stderr)
+            return 1
+        if sub == "list" and not rest:
+            for lay in view["layouts"]:
+                tag = " (applied)" if lay["name"] == view["applied"] else ""
+                print(f"{lay['name']}{' [built-in]' if lay['builtin'] else ''}{tag}"
+                      + (f"  {lay['error']}" if lay.get("error") else ""))
+            return 0
+        if sub == "show" and len(rest) == 1:
+            lay = next((x for x in view["layouts"] if x["name"] == rest[0]), None)
+            if lay is None:
+                print(f"no layout named {rest[0]!r}", file=sys.stderr)
+                return 1
+            if lay.get("error"):
+                print(lay["error"], file=sys.stderr)
+                return 1
+            print(f"{view['source']} plays ...")
+            span = lambda first, n: f"{first}" if n == 1 else f"{first}-{first + n - 1}"  # noqa: E731
+            for s in lay["slices"]:
+                print(f"  channels {span(s['start'], s['count'])} -> {s['label']} "
+                      f"(unit channel {span(s['device'], s['count'])})")
+            return 0
+        if sub == "apply" and len(rest) == 1:
+            patch = web_router.apply_layout(rest[0], rest[0])
+            print(f"{rest[0]} applied: the router now runs the patch {patch!r}")
+            return 0
+        if sub == "units":
+            if rest:
+                units = {}
+                for item in rest:
+                    key, _, spec = item.partition("=")
+                    count, _, device = spec.partition(":")
+                    units[key] = {"count": int(count), "device": int(device or 1)}
+                web_router.save_units(units)
+            for u in web_router.layouts_overview()["units"]:
+                print(f"{u['label']}: uses {u['count']} channel(s), listens from channel {u['device']}")
+            return 0
+    except (WriteRefused, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(usage, file=sys.stderr)
+    return 2
+
+
 def cmd_route(args: list[str]) -> int:
     """The dawless hub's patches and router, from the shell. No unit is written to: routing
     only passes MIDI, and the service lets go of every unit before a soft key (router_service)."""
     from . import router, router_service
 
-    usage = "usage: fm1-switch route list|show NAME|delete NAME|add NAME SRC DEST [...]|run NAME|status|panic"
+    usage = "usage: fm1-switch route list|show NAME|delete NAME|add NAME SRC DEST [...]|run NAME|status|panic|layout ..."
     if not args:
         print(usage, file=sys.stderr)
         return 2
@@ -516,6 +576,8 @@ def cmd_route(args: list[str]) -> int:
             store.save_patch(router.Patch(name, routes))
             print(f"{name}: {src} -> {dest} added ({len(routes)} route(s))")
             return 0
+        if sub == "layout":
+            return _cmd_route_layout(rest)
         if sub == "status" and not rest:
             import json as _json
             print(_json.dumps(router_service._read_json(router_service.status_path()) or
@@ -532,9 +594,8 @@ def cmd_route(args: list[str]) -> int:
             if len(rest) > 1:
                 print("usage: fm1-switch route run [NAME]", file=sys.stderr)
                 return 2
-            from . import config
             explicit = rest[0] if rest else None
-            default = config.setting("FM1_PATCH", "patch", "default")
+            default = config.value("patch")
             if explicit and explicit not in store.patches:
                 print(f"no patch named {explicit!r} (patches: {', '.join(store.patches) or 'none'})",
                       file=sys.stderr)
@@ -548,11 +609,13 @@ def cmd_route(args: list[str]) -> int:
                 signal.signal(sig, lambda *_: stop.set())
             log = lambda m: print(m, flush=True)  # noqa: E731  (journald timestamps it)
             reload = router_service.PatchFollower(explicit, default, log)
+            clock_follow = router_service.ClockFollower(log)
+            clock_follow.start_stopped()
             try:
                 with AlsaSeq("fm1-router") as seq:
                     svc = router_service.RouterService(seq, resolve, log=log)
                     log(f"router up; patch {reload.name!r}; stop with SIGTERM or Ctrl-C")
-                    svc.run(stop, reload=reload)
+                    svc.run(stop, reload=reload, clock=clock_follow)
             except SeqError as e:
                 print(f"cannot reach the ALSA sequencer: {e}", file=sys.stderr)
                 return 1
@@ -562,6 +625,52 @@ def cmd_route(args: list[str]) -> int:
         return 1
     print(usage, file=sys.stderr)
     return 2
+
+
+def cmd_clock(args: list[str]) -> int:
+    """The master clock's settings, from the shell. This only writes ``~/fm1-clock.json``; the
+    running router (``route run``) follows it and sends the MIDI. No unit is written to."""
+    import json as _json
+
+    from . import clock as clocklib
+    from . import router_service
+    from .units import SLOTS
+
+    usage = "usage: fm1-switch clock [status]|set BPM|start|stop|targets [UNIT ...]"
+    sub, rest = (args[0], args[1:]) if args else ("status", [])
+    try:
+        if sub == "status" and not rest:
+            st = clocklib.load()
+            live = router_service._read_json(router_service.status_path()).get("clock")
+            running = router_service.router_running()
+            print(f"{st.bpm:g} BPM, {'running' if st.running else 'stopped'}, to "
+                  f"{', '.join(st.targets) or 'every unit'}")
+            if not running:
+                print("the router is not running, so nothing is sent (fm1-switch route run)")
+            elif live is not None:
+                print(_json.dumps(live))
+            return 0
+        if sub == "set" and len(rest) == 1:
+            try:
+                bpm = float(rest[0])
+            except ValueError:
+                raise clocklib.ClockError("tempo must be a number") from None
+            st = clocklib.update(bpm=bpm)
+        elif sub in ("start", "stop") and not rest:
+            st = clocklib.update(running=(sub == "start"))
+        elif sub == "targets":
+            st = clocklib.update(targets=rest, valid_targets=set(SLOTS))
+        else:
+            print(usage, file=sys.stderr)
+            return 2
+    except clocklib.ClockError as e:
+        print(f"clock: {e}", file=sys.stderr)
+        return 1
+    print(f"{st.bpm:g} BPM, {'running' if st.running else 'stopped'}, to "
+          f"{', '.join(st.targets) or 'every unit'}")
+    if not router_service.router_running():
+        print("note: the router is not running, so nothing is sent yet", file=sys.stderr)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -596,6 +705,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_register(args[1:])
     if cmd == "route":
         return cmd_route(args[1:])
+    if cmd == "clock":
+        return cmd_clock(args[1:])
     if cmd == "set":
         return cmd_set(args[1:])
     if cmd == "asset":

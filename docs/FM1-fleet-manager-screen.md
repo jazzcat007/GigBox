@@ -6,7 +6,7 @@
 > still correct; the keys and screens are not. Note: binding a flash id to a sticker was a
 > console feature and has no replacement yet (see `docs/AUDIT-fleet-manager.md`, FEAT-01).
 
-**What this is:** the touchscreen on the Pi that swaps firmware between your four FM-1s.
+**What this is:** the screen that swaps firmware between your four FM-1s. It runs on the Pi's touch panel or, with no screen on the Pi, in a phone browser (headless mode).
 One job, done carefully: get firmware onto the right unit.
 
 The expert web UI (`http://<pi-hostname>.local:8080` from a phone or laptop) still exists for

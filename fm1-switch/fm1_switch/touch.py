@@ -33,6 +33,8 @@ import select
 import struct
 from dataclasses import dataclass
 
+from . import config
+
 #: Linux evdev structures. struct input_event is 24 bytes on 64-bit ARM/x86:
 #: struct timeval time (16 bytes) + __u16 type + __u16 code + __s32 value.
 EVENT = struct.Struct("llHHi")
@@ -70,9 +72,9 @@ class TouchReader:
     (a laptop, the test suite) is harmless.
     """
 
-    def __init__(self, path: str = "/dev/input/event0", *,
+    def __init__(self, path: str | None = None, *,
                  reader=None) -> None:
-        self.path = path
+        self.path = path or str(config.value("touch_device"))
         #: Where bytes come from. Injectable so the event parsing can be tested without a
         #: real device -- and so a busy-loop never mistakes stdout for an event node.
         self._read = reader or os.read

@@ -56,18 +56,28 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-HUB_BASE = "https://thefirmwarehub.com"
-CATALOG_URL = f"{HUB_BASE}/catalog.json"
+from . import config
+
+def hub_base() -> str:
+    """The hub's address (config ``hub_url``; read-only on the website)."""
+    return str(config.value("hub_url")).rstrip("/")
+
+
+def catalog_url() -> str:
+    return f"{hub_base()}/catalog.json"
 
 #: Required by the hub's terms: they ask tools to identify themselves.
 USER_AGENT = "fm1-fleet/0.1 (Raspberry Pi FM-1 firmware manager; personal use)"
 
-#: The hub asks that the catalogue be read at most once a day.
-MAX_AGE_SECONDS = 24 * 60 * 60
+def max_age_seconds() -> float:
+    """The hub asks that the catalogue be read at most once a day (``hub_max_age_hours``)."""
+    return float(config.value("hub_max_age_hours")) * 3600
 
-#: A forced refresh is honoured only when the cache is at least this old (HUB-02), so a
-#: client looping the refresh button cannot hammer the hub.
-FORCE_MIN_AGE_SECONDS = 60 * 60
+
+def force_min_age_seconds() -> float:
+    """A forced refresh is honoured only when the cache is at least this old (HUB-02), so a
+    client looping the refresh button cannot hammer the hub (``hub_refresh_min_minutes``)."""
+    return float(config.value("hub_refresh_min_minutes")) * 60
 
 ATTRIBUTION = (
     "Firmware list: The Firmware Hub – https://thefirmwarehub.com. "
@@ -94,10 +104,7 @@ KIND_LABELS = {
 
 def cache_dir() -> Path:
     """Where the catalogue is cached between runs."""
-    raw = os.environ.get("FM1_HUB_CACHE")
-    if raw:
-        return Path(raw).expanduser()
-    return Path("~/fm1-hub").expanduser()
+    return config.path("hub_cache")
 
 
 def catalog_path() -> Path:
@@ -146,7 +153,7 @@ class Entry:
         """Absolute URL of the package, or None if the hub does not mirror one."""
         if not self.pkg:
             return None
-        return f"{HUB_BASE}/{self.pkg.lstrip('/')}"
+        return f"{hub_base()}/{self.pkg.lstrip('/')}"
 
     @property
     def installable_by_us(self) -> bool:
@@ -209,7 +216,7 @@ class Catalog:
 
     @property
     def stale(self) -> bool:
-        return self.age_seconds > MAX_AGE_SECONDS
+        return self.age_seconds > max_age_seconds()
 
     def by_id(self, entry_id: str) -> Entry | None:
         for e in self.entries:
@@ -298,7 +305,8 @@ def parse_catalog(payload: dict, *, fetched_at: float | None = None) -> Catalog:
     )
 
 
-def load(*, network: bool = True, force: bool = False, timeout: float = 60.0) -> Catalog:
+def load(*, network: bool = True, force: bool = False,
+         timeout: float | None = None) -> Catalog:
     """Return the catalogue, from cache when fresh, else from the hub.
 
     ``network=False`` never touches the network (offline mode, and tests).
@@ -315,7 +323,7 @@ def load(*, network: bool = True, force: bool = False, timeout: float = 60.0) ->
         except (OSError, ValueError, HubError):
             cached = None
 
-    if force and cached is not None and cached.entries and cached.age_seconds < FORCE_MIN_AGE_SECONDS:
+    if force and cached is not None and cached.entries and cached.age_seconds < force_min_age_seconds():
         force = False
     if cached is not None and cached.entries and not force and not cached.stale:
         return cached
@@ -327,9 +335,11 @@ def load(*, network: bool = True, force: bool = False, timeout: float = 60.0) ->
             "Connect to Wi-Fi and refresh, or run `fm1-hub --refresh`."
         )
 
+    if timeout is None:
+        timeout = float(config.value("hub_timeout"))
     try:
         req = urllib.request.Request(
-            CATALOG_URL, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+            catalog_url(), headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed URL
             raw = resp.read()
@@ -368,7 +378,9 @@ def load(*, network: bool = True, force: bool = False, timeout: float = 60.0) ->
 #   * write via a temp file and rename, so a killed download cannot leave a
 #     half-written .fwsc where the library scan will pick it up.
 
-MAX_PACKAGE_BYTES = 4 * 1024 * 1024  # generous: the largest catalogue entry is ~1 MiB
+def max_package_bytes() -> int:
+    """Largest download accepted (``max_package_mb``; the largest catalogue entry is ~1 MiB)."""
+    return int(float(config.value("max_package_mb")) * 1024 * 1024)
 
 
 class PackageDownloadError(HubError):
@@ -391,7 +403,7 @@ def fetch_package(
     entry: Entry,
     dest_dir: Path,
     *,
-    timeout: float = 180.0,
+    timeout: float | None = None,
     allow_unpinned: bool = False,
 ) -> Path:
     """Download one catalogue entry into ``dest_dir`` and verify it.
@@ -420,13 +432,16 @@ def fetch_package(
     dest = dest_dir / filename
     tmp = dest.with_name(dest.name + ".part")
 
+    if timeout is None:
+        timeout = float(config.value("download_timeout"))
+    limit = max_package_bytes()
     digest = hashlib.sha256()
     written = 0
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             declared = resp.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > MAX_PACKAGE_BYTES:
+            if declared and declared.isdigit() and int(declared) > limit:
                 raise PackageDownloadError(
                     f"refusing {int(declared)} bytes — larger than any FM-1 package"
                 )
@@ -436,7 +451,7 @@ def fetch_package(
                     if not chunk:
                         break
                     written += len(chunk)
-                    if written > MAX_PACKAGE_BYTES:
+                    if written > limit:
                         raise PackageDownloadError("download exceeded the size limit")
                     digest.update(chunk)
                     fh.write(chunk)

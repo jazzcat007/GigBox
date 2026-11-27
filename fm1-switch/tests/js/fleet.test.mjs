@@ -43,7 +43,7 @@ class FakeNode {
   button(text) { return this.buttons().find((b) => b.textContent === text || b.textContent.startsWith(text)); }
 }
 
-const IDS = ["screen", "status", "back", "settings", "routes", "sets", "summary", "confirm", "confirm-body",
+const IDS = ["screen", "status", "back", "settings", "routes", "sets",  "summary", "confirm", "confirm-body",
              "confirm-cancel", "confirm-go", "confirm-title", "confirm-box", "confirm-actions",
              "chooser", "chooser-title", "chooser-body", "chooser-box", "chooser-actions",
              "chooser-cancel", "chooser-restore", "chooser-delete"];
@@ -51,6 +51,7 @@ const IDS = ["screen", "status", "back", "settings", "routes", "sets", "summary"
 const ROUTER = {
   router: { running: true, patch: "jam", attached: ["fm1-a", "fm1-b"], missing: ["fm1-c"], held: [] },
   active: "jam", default: "default", error: "",
+  clock: { bpm: 120, running: false, targets: [], live: null, error: "", min: 20, max: 300 },
   slots: ["a", "b", "c", "d"].map((x) => ({ slot: `fm1-${x}`, label: x.toUpperCase() })),
   patches: [
     { name: "jam", routes: [{ index: 0, text: "A → B", route: { source: "fm1-a", dest: "fm1-b" } },
@@ -1274,6 +1275,68 @@ test("RUN THIS, STOP, DELETE, remove-route and PANIC each wait for a confirmatio
   assert.equal(t.nodes.screen.button("RUN THIS").disabled, true, "an empty patch cannot be run");
 });
 
+test("the CLOCK screen shows tempo and targets, nudges the tempo at once, and BACK returns to the patches", async () => {
+  const t = await load({ units: [unit()], packages: [] });
+  await openRoutes(t);
+  t.nodes.screen.button("CLOCK").click();
+  assert.equal(t.run("state.view"), "clock");
+  assert.match(t.nodes.screen.textContent, /TEMPO 120 BPM/);
+  assert.match(t.nodes.status.textContent, /STOPPED · TO EVERY UNIT/);
+  t.nodes.__router = { ...ROUTER, clock: { ...ROUTER.clock, bpm: 121 } };
+  t.nodes.screen.button("+1").click();
+  await settle();
+  const c = routerCalls(t);
+  assert.deepEqual(c.map((x) => [x.url, lastBody(x)]), [["/api/router/clock", { bpm: 121 }]]);
+  assert.equal(t.nodes.confirm.hidden, true, "tempo needs no dialog");
+  t.nodes.back.click();
+  assert.equal(t.run("state.view"), "routes");
+});
+
+test("ticking units sends targets; none ticked means every unit, and the last one cannot be unticked", async () => {
+  const t = await load({ units: [unit()], packages: [] });
+  await openRoutes(t);
+  t.nodes.screen.button("CLOCK").click();
+  const tick = (l) => t.nodes.screen.buttons().find((b) => b.textContent.replace("✓ ", "") === l);
+  tick("B").click();
+  await settle();
+  assert.deepEqual(lastBody(routerCalls(t).at(-1)), { targets: ["fm1-a", "fm1-c", "fm1-d"] });
+  t.run('state.router.clock.targets = ["fm1-a"]');
+  t.run("render()");
+  const before = routerCalls(t).length;
+  tick("A").click();
+  await settle();
+  assert.equal(routerCalls(t).length, before, "at least one unit stays ticked");
+});
+
+test("START confirms first and sends the clock confirmation; STOP goes straight through", async () => {
+  const t = await load({ units: [unit()], packages: [] });
+  await openRoutes(t);
+  t.nodes.screen.button("CLOCK").click();
+  t.nodes.screen.button("START").click();
+  assert.equal(t.nodes.confirm.hidden, false);
+  assert.equal(routerCalls(t).length, 0);
+  t.nodes.__router = { ...ROUTER, clock: { ...ROUTER.clock, running: true } };
+  await pressGoRoute(t);
+  assert.deepEqual(routerCalls(t).map((x) => [x.url, lastBody(x)]),
+                   [["/api/router/clock", { running: true, confirm: "clock" }]]);
+  assert.equal(t.run("state.view"), "clock");
+  assert.match(t.nodes.status.textContent, /CLOCK STARTED/);
+  t.nodes.screen.button("STOP").click();
+  await settle();
+  assert.deepEqual(lastBody(routerCalls(t).at(-1)), { running: false });
+  assert.equal(t.nodes.confirm.hidden, true);
+});
+
+test("the clock says when the router is not running, and the ROUTES button shows a running clock", async () => {
+  const t = await load({ units: [unit()], packages: [] });
+  t.nodes.__router = { ...ROUTER, clock: { ...ROUTER.clock, running: true, bpm: 98 },
+                       router: { running: false, patch: null, attached: [], missing: [], held: [] } };
+  await openRoutes(t);
+  assert.ok(t.nodes.screen.button("CLOCK 98 ▶"));
+  t.nodes.screen.button("CLOCK 98 ▶").click();
+  assert.match(t.nodes.status.textContent, /ROUTER NOT RUNNING: NOTHING IS SENT/);
+});
+
 async function pressGoRoute(t) {
   t.elapse(1000);
   t.nodes["confirm-go"].dispatch("pointerdown");
@@ -1414,3 +1477,31 @@ test("while a push runs the set screen is locked and shows each unit's progress"
   assert.match(t.nodes.screen.textContent, /WRITING/);
   assert.equal(t.nodes.screen.button("PUSH ALL").disabled, true);
 });
+
+test("after a reconnect, RE-REGISTER FLEET appears only when letters are missing AND '?' units run", async () => {
+  const lost = unit({ unit_id: "aaaaaaaa00000001", label: "A", slot: "fm1-a", download: false, running: false, present: false });
+  const stray = unit({ unit_id: "port:1-2", label: "?", slot: null, download: false, running: true, present: false });
+  const t = await load({ units: [lost, stray], packages: [] });
+  assert.ok(t.nodes.screen.button("RE-REGISTER FLEET"), "offered");
+  assert.match(t.nodes.screen.textContent, /FLEET NOT REGISTERED/);
+  assert.match(t.nodes.screen.className, /withbar/);          // laid out above the grid, not clipped inside it
+  const t2 = await load({ units: [stray], packages: [] });          // a new unit: REGISTER, not match
+  assert.equal(t2.nodes.screen.button("RE-REGISTER FLEET"), undefined);
+  const t3 = await load({ units: [lost], packages: [] });           // simply switched off
+  assert.equal(t3.nodes.screen.button("RE-REGISTER FLEET"), undefined);
+});
+
+test("RE-REGISTER FLEET asks first, then posts the confirm to /api/reconcile and asks for every unit", async () => {
+  const lost = unit({ unit_id: "aaaaaaaa00000001", label: "A", slot: "fm1-a", download: false, running: false, present: false });
+  const stray = unit({ unit_id: "port:1-2", label: "?", slot: null, download: false, running: true, present: false });
+  const t = await load({ units: [lost, stray], packages: [] });
+  t.nodes.screen.button("RE-REGISTER FLEET").click();
+  await settle();
+  assert.equal(t.nodes.confirm.hidden, false);
+  assert.equal(t.calls.filter((c) => c.url === "/api/reconcile").length, 0);
+  await pressGo(t);
+  const call = t.calls.find((c) => c.url === "/api/reconcile");
+  assert.ok(call, "posted");
+  assert.deepEqual(JSON.parse(call.opts.body), { confirm: "reconcile", all: true });
+});
+

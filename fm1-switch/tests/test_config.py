@@ -20,7 +20,7 @@ def test_default_is_four_units(monkeypatch, tmp_path):
 
 def test_unit_count_from_file_is_clamped(monkeypatch, tmp_path):
     assert len(_reload(monkeypatch, tmp_path, {"units": 6}).SLOTS) == 6
-    assert len(_reload(monkeypatch, tmp_path, {"units": 99}).SLOTS) == 8
+    assert len(_reload(monkeypatch, tmp_path, {"units": 99}).SLOTS) == 16
     assert len(_reload(monkeypatch, tmp_path, {"units": 0}).SLOTS) == 1
 
 

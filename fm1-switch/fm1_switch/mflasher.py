@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 
-from .config import setting
+from . import config
 import re
 import shutil
 import subprocess
@@ -70,7 +70,7 @@ def binary() -> str:
     exactly the setup the systemd unit uses. Resolve once, here, so callers agree.
     """
     import shutil
-    wanted = setting("FM1_FLASHER", "flasher", "m-flasher")
+    wanted = str(config.value("flasher"))
     if os.path.isabs(wanted):
         return wanted
     # The systemd unit points FM1_FLASHER at ~/bin/m-flasher. A bare CLI run on the Pi does
@@ -89,7 +89,17 @@ class Result:
     stderr: str = ""
 
 
-def run(args: list[str], device: str | None, timeout: float = 300.0) -> Result:
+#: m-flasher verb -> the setting that says how long it may run (anything else: a write).
+_TIMEOUT_KEY = {"restore": "restore_timeout", "backup": "backup_timeout",
+                "restart": "restart_timeout", "info": "info_timeout",
+                "download-mode": "info_timeout"}
+
+
+def default_timeout(verb: str) -> float:
+    return float(config.value(_TIMEOUT_KEY.get(verb, "flash_timeout")))
+
+
+def run(args: list[str], device: str | None, timeout: float | None = None) -> Result:
     """Run one m-flasher invocation.
 
     ``device`` is required for anything that acts on a unit. ``--yes`` is always added
@@ -103,6 +113,9 @@ def run(args: list[str], device: str | None, timeout: float = 300.0) -> Result:
     )
     if resolved is None:
         raise NotFound(exe)
+
+    if timeout is None:
+        timeout = default_timeout(args[0] if args else "")
 
     argv = [resolved, *args, "--yes"]
     if device:
@@ -237,7 +250,7 @@ def parse_info(text: str) -> Identity:
     return ident
 
 
-def info(device: str, timeout: float = 60.0) -> Identity:
+def info(device: str, timeout: float | None = None) -> Identity:
     """Read a unit's identity (reads the whole flash, so allow generous time)."""
     return parse_info(run(["info"], device, timeout).stdout or "")
 
@@ -276,19 +289,19 @@ def argv_info() -> list[str]:
 
 
 def install_firmware(device: str, package: str, *, restart: bool = True,
-                     timeout: float = 300.0) -> Result:
+                     timeout: float | None = None) -> Result:
     """Switch one unit's firmware. The heavy, writing operation."""
     return run(argv_firmware(package, restart=restart), device, timeout)
 
 
-def backup_unit(device: str, directory: str, *, timeout: float = 300.0) -> Result:
+def backup_unit(device: str, directory: str, *, timeout: float | None = None) -> Result:
     """Save the unit's whole flash (and a .json record with its flash id and sha256) into
     ``directory``. Reads only; nothing on the unit changes."""
     return run(["backup", directory], device, timeout)
 
 
 def restore_image(device: str, image: str, *, keep_bootloader: bool = True,
-                  restart: bool = True, timeout: float = 600.0) -> Result:
+                  restart: bool = True, timeout: float | None = None) -> Result:
     """Write a whole-flash backup (``m-flasher backup``) back to one unit."""
     args = ["restore", image]
     if keep_bootloader:
@@ -298,9 +311,9 @@ def restore_image(device: str, image: str, *, keep_bootloader: bool = True,
     return run(args, device, timeout)
 
 
-def restart(device: str, timeout: float = 90.0) -> Result:
+def restart(device: str, timeout: float | None = None) -> Result:
     return run(argv_restart(), device, timeout)
 
 
-def download_mode(device: str | None = None, timeout: float = 60.0) -> Result:
+def download_mode(device: str | None = None, timeout: float | None = None) -> Result:
     return run(argv_download_mode(device), device, timeout)

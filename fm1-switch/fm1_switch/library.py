@@ -23,14 +23,13 @@ from pathlib import Path
 #: Extensions the vendor and the community ship packages under.
 PACKAGE_SUFFIXES: tuple[str, ...] = (".fwsc",)
 
-from .config import path_setting
+from . import config
 
-DEFAULT_LIBRARY = "~/fm1-firmwares"
 
 
 def library_dir() -> Path:
     """The Pi's own firmware library directory."""
-    return path_setting("FM1_LIBRARY", "library", DEFAULT_LIBRARY)
+    return config.path("library")
 
 
 @dataclass(frozen=True)

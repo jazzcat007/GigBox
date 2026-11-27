@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .config import path_setting
+from . import config
 
 
 class MakerError(Exception):
@@ -46,7 +46,7 @@ def family_for(package: str) -> Family | None:
 
 
 def tools_dir() -> Path:
-    return path_setting("FM1_MAKER_TOOLS", "maker_tools", "~/fm1/vendor/jiant")
+    return config.path("maker_tools")
 
 
 def _python() -> Path:

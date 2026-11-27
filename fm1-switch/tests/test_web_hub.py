@@ -961,6 +961,25 @@ def test_restart_shows_a_busy_phase_and_clears_it(client, monkeypatch):
     assert seen == ["Restarting…"] and web.APP.busy is None
 
 
+def test_reconcile_needs_its_own_confirm_and_shows_a_busy_phase(client, monkeypatch):
+    _get, post, _ = client
+    from fm1_switch import guided, web
+    code, body = post("/api/reconcile", {"confirm": "yes"})
+    assert code == 409 and "confirmation" in body["error"]
+    seen = []
+
+    def fake(*, lock, everything=False, on_phase=None):
+        assert everything is True
+        on_phase("Identifying units…")
+        seen.append(web.APP.busy)
+        return guided.ReconcileOutcome(matched=[("fm1-a", U, "1-2.1")], message="matched A")
+    monkeypatch.setattr(guided, "reconcile", fake)
+    code, body = post("/api/reconcile", {"confirm": "reconcile", "all": True})
+    assert code == 200 and body["message"] == "matched A"
+    assert body["matched"] == [{"slot": "fm1-a", "unit_id": U, "port": "1-2.1"}]
+    assert seen == ["Identifying units…"] and web.APP.busy is None
+
+
 def test_inspect_cache_survives_concurrent_puts(tmp_path):
     cache = packages._Cache()
     cache.path = tmp_path / "inspect.json"

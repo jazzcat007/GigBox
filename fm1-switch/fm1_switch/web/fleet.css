@@ -94,6 +94,19 @@ body { display: flex; flex-direction: column; }
 #screen.grid.cols3 { grid-template-columns: repeat(3, 1fr); }
 #screen.grid.cols4 { grid-template-columns: repeat(4, 1fr); }
 
+/* The re-register bar: one full-width row above the units, only while something is wrong. */
+#screen.grid.withbar { grid-template-rows: auto 1fr 1fr; }
+.regbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: space-between; gap: calc(3 * var(--u));
+  padding: calc(1.5 * var(--u)) calc(3 * var(--u));
+  background: var(--panel); border: calc(0.7 * var(--u)) solid #ff4a3a; border-radius: calc(3 * var(--u));
+}
+.regbar .state { font-size: calc(5.4 * var(--u)); font-weight: 800; letter-spacing: 0.2vh; }
+.regbar .state.attn { color: #ff4a3a; }
+.regbar .state.attn::before { content: "! "; }
+.regbar .primary { min-height: calc(12 * var(--u)); font-size: calc(5.4 * var(--u)); font-weight: 800; border-radius: calc(2.5 * var(--u)); padding: 0 calc(4 * var(--u)); }
+
 .unit {
   display: grid;
   grid-template-columns: calc(18 * var(--u)) 1fr;

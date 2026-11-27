@@ -74,7 +74,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import mflasher
-from .config import path_setting
+from . import config
 from .units import SLOT_LABELS, SLOTS
 
 #: A sysfs chain looks like
@@ -85,7 +85,7 @@ _SCSI_GENERIC = "/sys/class/scsi_generic"
 
 
 def registry_path() -> Path:
-    return path_setting("FM1_UNITS", "registry", "~/fm1-units.json")
+    return config.path("registry")
 
 
 @dataclass
@@ -112,6 +112,11 @@ class Binding:
     #: unit is not finished until the operator confirms the maker's installer step.
     #: ``{"package": name, "sha256": hex, "since": epoch seconds}`` or None.
     setup_pending: dict | None = None
+    #: USB device number of the running unit when its flash id was last read and its port
+    #: learned (MATCH UNITS). The kernel gives a unit a new number every time it
+    #: re-enumerates, so a port pairing between look-alike units is PROVEN only while the
+    #: number still matches: a power cycle or a moved cable invalidates it.
+    devnum: str | None = None
 
     @property
     def label(self) -> str:
@@ -221,6 +226,7 @@ def load(path: Path | None = None) -> Registry:
             fingerprint=rec.get("fingerprint"),
             name=rec.get("name") if isinstance(rec.get("name"), str) else None,
             setup_pending=_clean_pending(rec.get("setup_pending")),
+            devnum=rec.get("devnum") if isinstance(rec.get("devnum"), str) else None,
         )
     return reg
 
@@ -313,6 +319,7 @@ def relearn_after_flash(unit_id: str, port: str, firmware: str | None = None) ->
         shared = any(o.fingerprint == run.fingerprint and o.slot != b.slot
                      for o in reg.units.values())
         b.fingerprint = run.fingerprint
+        b.devnum = run.devnum
         b.port = port
         if firmware:
             b.firmware = firmware
@@ -331,7 +338,7 @@ def save(reg: Registry, path: Path | None = None) -> None:
             slot: {"unit_id": b.unit_id, "port": b.port, "chip": b.chip,
                    "firmware": b.firmware, "bound_at": b.bound_at,
                    "fingerprint": b.fingerprint, "name": b.name,
-                   "setup_pending": b.setup_pending}
+                   "setup_pending": b.setup_pending, "devnum": b.devnum}
             for slot, b in sorted(reg.units.items())
         },
     }
@@ -530,7 +537,7 @@ def known() -> list[LiveUnit]:
                             port=run.port, present=False, chip=b.chip,
                             firmware=b.firmware, provisional=b.provisional,
                             running=True, name=b.name, setup_pending=b.setup_pending,
-                            hint="port" if _tie_broken_by_port(reg, runs, run) else None))
+                            hint="port" if _unproven_port_pairing(reg, runs, run, b) else None))
     # A running unit nothing could be paired with is still a unit on the bus: show it as
     # "?" rather than leave it out of the count (audit REG-01). Its id is a placeholder
     # that can never reach a write (guided.looks_like_flash_id refuses it).
@@ -642,6 +649,24 @@ def _tie_broken_by_port(reg: Registry, runs: list["RunningUnit"], run: "RunningU
     return sum(1 for x in runs if x.fingerprint == run.fingerprint) > 1
 
 
+def _unproven_port_pairing(reg: Registry, runs: list["RunningUnit"], run: "RunningUnit",
+                           b: Binding) -> bool:
+    """A sticker chosen only by last-seen port, where nothing proves the unit has not moved.
+
+    Proof is the USB device number recorded when the flash id was last read on this port:
+    it changes whenever the unit re-enumerates (power cycle, replug), so an equal number
+    means the same unit has sat on that port since. Without it, two look-alike units that
+    swap jacks would swap letters silently."""
+    if not _tie_broken_by_port(reg, runs, run):
+        return False
+    return not (b.devnum and b.devnum == run.devnum)
+
+
+def unproven_runs(reg: Registry, runs: list["RunningUnit"], paired) -> list["RunningUnit"]:
+    """Running units whose letter rests on an unproven port pairing (see above)."""
+    return [r for r, b in paired if _unproven_port_pairing(reg, runs, r, b)]
+
+
 def unassigned(present: list[LiveUnit] | None = None) -> list[LiveUnit]:
     """Units in download mode that no sticker claims."""
     units = present if present is not None else scan()
@@ -667,6 +692,8 @@ class RunningUnit:
     #: serial == flash id). Other firmwares may report nothing or something else, so it is
     #: only ever used to *match* a binding whose flash id is equal, never as an identity.
     serial: str | None = None
+    #: USB device number: new on every enumeration, so it proves "same connection as before".
+    devnum: str | None = None
 
     @property
     def has_midi(self) -> bool:
@@ -736,6 +763,7 @@ def running() -> list[RunningUnit]:
             fingerprint=fp,
             slot_hint=hints.get(fp or ""),
             serial=_read(str(dev / "serial")),
+            devnum=_read(str(dev / "devnum")),
         ))
     return out
 

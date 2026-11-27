@@ -13,6 +13,33 @@ It is not yet merged to `main`. The bench verification that remains is in
 
 ### Added
 
+- **RE-REGISTER FLEET: put the units back on their profiles after a reconnect.** When the cables move, the
+  registry's saved ports and fingerprints go stale and running units that look alike (same
+  firmware, same `bcdDevice`) cannot be told apart from USB: the letters show NOT CONNECTED
+  and the units show as `?`. The fleet screen now offers RE-REGISTER FLEET (`POST /api/reconcile`,
+  `guided.reconcile`) whenever a letter is missing and an unlettered unit is running, or a letter rests on a
+  port guess. It puts every running unit into download mode (the button is shown only when
+  something looks wrong), reads each one's flash id, matches it to its letter by id, restarts them and re-learns each one's port and fingerprint.
+  A flash id nobody owns is reported, never bound (REGISTER stays deliberate), and nothing is
+  written to any unit's flash. Look-alike units placed only by their last-seen port are
+  drawn `A~` and count as unproven once the unit re-enumerates (the registry keeps the USB
+  device number from the last match), so swapped cables cannot silently swap letters; RE-REGISTER
+  FLEET is offered for those too. Tested against a fake bus; first bench run 2026-11-27.
+- **Settings page on the web admin.** Hardcoded tunables now live in one schema
+  (`fm1_switch/config.py`) and are edited at `/index.html` → Settings (`GET`/`POST
+  /api/settings`): flash, backup, restore and wait timeouts, catalogue freshness and refresh
+  cool-down, download size limit, automatic backups kept, starting tempo, flash-hold lifetime,
+  touch device, and every folder and file. Values are read when used, so they apply without a
+  restart (a few say "restart to apply"). Saves are all-or-nothing and audit-logged. The
+  flasher program, the maker's installer folder, the hub address and the network/token
+  settings are shown but not editable from the website, on purpose.
+- **Master clock and transport** (dawless hub): `fm1-switch clock set|start|stop|targets`, a
+  CLOCK screen on the ROUTES page, and `POST /api/router/clock`. The running router sends MIDI
+  start, clock and stop to the chosen units from `~/fm1-clock.json`. A router always starts with
+  the clock stopped. Tested against a fake sequencer only; not yet run on the units.
+- **No screen needed on the Pi.** Everything the touch panel does, including the routes, sets
+  and master-clock screens, is also served by headless mode (`fm1-switch web --headless`, port
+  80) to a phone or tablet. The HDMI panel is now optional, not part of the appliance.
 - **Register a unit from the panel** (B4, FEAT-01): SETTINGS → REGISTER scans for units in
   download mode, shows each flash id the server has just read, and binds the one you pick to
   a sticker letter in a two-step confirm. Refusals come with their reason on screen.

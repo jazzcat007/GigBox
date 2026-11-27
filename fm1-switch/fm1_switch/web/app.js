@@ -330,6 +330,270 @@ async function refresh() {
   }
 }
 
+// ------------------------------------------------------------- channel layout
+//
+// Which slice of the controller's 16 channels goes to which unit. The router shifts each
+// slice onto the unit's own channels, so no unit needs a channel set by hand. Two layouts
+// are built in (computed from each unit's channel count); a custom one is edited here.
+
+const layout = { data: null, name: null, draft: null, unitEdits: {} };
+
+const post = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+const spanText = (first, n) => (n === 1 ? `${first}` : `${first}–${first + n - 1}`);
+
+function numInput(value, onchange, disabled) {
+  return el("input", { type: "number", min: "1", max: "16", step: "1", value, disabled: disabled ? "" : null,
+    class: "chan", oninput: (ev) => onchange(Number(ev.target.value)) });
+}
+
+function currentLayout() {
+  return layout.data.layouts.find((l) => l.name === layout.name) || layout.data.layouts[0];
+}
+
+function renderLayout() {
+  const root = $("#layout");
+  root.replaceChildren();
+  const d = layout.data;
+  if (!d) return;
+  $("#layout-hint").textContent = `${d.source} plays; the units follow`;
+  if (d.error) root.append(el("p", { class: "note", text: d.error }));
+  if (!layout.name || !d.layouts.some((l) => l.name === layout.name)) {
+    layout.name = d.applied && d.layouts.some((l) => l.name === d.applied) ? d.applied : d.layouts[0].name;
+    layout.draft = null;
+  }
+  root.append(unitsCard(d), layoutCard(d));
+}
+
+function unitsCard(d) {
+  const dirty = Object.keys(layout.unitEdits).length > 0;
+  const rows = d.units.map((u) => {
+    const e = layout.unitEdits[u.key] || {};
+    const set = (field) => (v) => {
+      layout.unitEdits[u.key] = Object.assign({ count: u.count, device: u.device }, layout.unitEdits[u.key], { [field]: v });
+      renderLayoutBar();
+    };
+    return el("div", { class: "srow" },
+      el("label", { text: `Unit ${u.label}` }),
+      el("div", { class: "sfield" }, "uses ", numInput(e.count ?? u.count, set("count")), " channel(s), listens from channel ",
+        numInput(e.device ?? u.device, set("device"))));
+  });
+  return el("details", { class: "sgroup", open: "" },
+    el("summary", { text: "Units: how many channels each uses" }),
+    el("div", { class: "hint pad", text: "A one-voice unit uses 1 channel; a four-track one uses 4. “Listens from” is the channel the unit itself is set to (normally 1): the router translates, so nothing on the unit needs changing." }),
+    ...rows,
+    el("div", { class: "settings-bar", id: "layout-unitbar" },
+      el("button", { class: "primary", id: "layout-unitsave", text: "Save units", disabled: dirty ? null : "", onclick: saveLayoutUnits })));
+}
+
+function renderLayoutBar() {
+  const b = $("#layout-unitsave");
+  if (b) b.disabled = Object.keys(layout.unitEdits).length === 0;
+}
+
+async function saveLayoutUnits() {
+  try {
+    await post("/api/router/layouts/units", { units: layout.unitEdits });
+    layout.unitEdits = {};
+    layout.data = await api("/api/router/layouts");
+    renderLayout();
+    toast("Units saved" + (layout.data.applied ? "; the running layout was rebuilt." : "."));
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function layoutCard(d) {
+  const cur = currentLayout();
+  const custom = !cur.builtin;
+  if (!layout.draft || layout.draft.name !== cur.name) {
+    layout.draft = { name: cur.name, slices: cur.slices.map((s) => ({ ...s })) };
+  }
+  const pick = el("select", { id: "layout-pick", onchange: (ev) => { layout.name = ev.target.value; layout.draft = null; renderLayout(); } },
+    ...d.layouts.map((l) => el("option", { value: l.name, selected: l.name === cur.name ? "" : null,
+      text: `${l.name}${l.builtin ? " (built in)" : ""}${l.name === d.applied ? " — running" : ""}` })));
+  const rows = layout.draft.slices.map((s) => el("div", { class: "srow" },
+    el("label", { text: `Unit ${s.label}` }),
+    el("div", { class: "sfield" },
+      "controller ch ", numInput(s.start, (v) => { s.start = v; syncLayoutSummary(); }, !custom),
+      ` for ${s.count} → unit ch `, numInput(s.device, (v) => { s.device = v; syncLayoutSummary(); }, !custom),
+      el("span", { class: "unit", id: `sum-${s.key}`, text: "" }))));
+  const actions = el("div", { class: "settings-bar" },
+    el("button", { class: "primary", text: "Apply", disabled: cur.error ? "" : null, onclick: () => applyLayout(cur.name) }),
+    el("button", { class: "ghost", text: custom ? "Save changes" : "Copy to custom…", onclick: () => saveCustom(custom ? cur.name : null) }),
+    custom ? el("button", { class: "ghost", text: "Delete", onclick: () => deleteCustom(cur.name) }) : null);
+  const card = el("details", { class: "sgroup", open: "" },
+    el("summary", { text: "Layout" }),
+    el("div", { class: "srow" }, el("label", { for: "layout-pick", text: "Layout" }), el("div", { class: "sfield" }, pick)),
+    cur.error ? el("div", { class: "hint pad", text: cur.error }) : null,
+    cur.builtin ? el("div", { class: "hint pad", text: cur.name === "packed"
+      ? "Packed: each unit takes only the channels it uses, one after another."
+      : "Blocks: each unit owns a block, so a unit's channels never move when another changes." }) : null,
+    ...rows, actions);
+  queueMicrotask(syncLayoutSummary);
+  return card;
+}
+
+function syncLayoutSummary() {
+  for (const s of layout.draft ? layout.draft.slices : []) {
+    const n = document.getElementById(`sum-${s.key}`);
+    if (n) n.textContent = `${spanText(s.start, s.count)} → ${spanText(s.device, s.count)}`;
+  }
+}
+
+function applyLayout(name) {
+  openModal(`Run the ${name} layout?`, [
+    el("p", { text: "The router will send each slice of the controller's channels to its unit. Nothing is written to a unit." }),
+  ], [
+    { label: "Cancel", class: "ghost" },
+    { label: "Apply", class: "primary", onclick: async () => {
+      try {
+        layout.data = (await post("/api/router/layouts/apply", { name, confirm: name }));
+        renderLayout();
+        toast(`The ${name} layout is running.`);
+      } catch (err) { toast(err.message, "bad"); }
+    } },
+  ]);
+}
+
+async function saveCustom(existing) {
+  let name = existing;
+  if (!name) {
+    try { name = window.prompt("Name for the custom layout (letters, digits, space, - _ .)", "my layout"); } catch { return; }
+    if (!name) return;
+  }
+  const slices = {};
+  for (const s of layout.draft.slices) slices[s.key] = { start: s.start, count: s.count, device: s.device };
+  try {
+    layout.data = await post("/api/router/layouts/save", { layout: { name, source: layout.data.source, slices } });
+    layout.name = name;
+    layout.draft = null;
+    renderLayout();
+    toast(`Saved ${name}.`);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function deleteCustom(name) {
+  openModal(`Delete the ${name} layout?`, [el("p", { text: "The patch it made stays on the router until you apply another layout." })], [
+    { label: "Cancel", class: "ghost" },
+    { label: "Delete", class: "danger", onclick: async () => {
+      try {
+        layout.data = await post("/api/router/layouts/delete", { name, confirm: name });
+        layout.name = null;
+        renderLayout();
+      } catch (err) { toast(err.message, "bad"); }
+    } },
+  ]);
+}
+
+async function loadLayout() {
+  layout.data = await api("/api/router/layouts");
+  layout.unitEdits = {};
+  renderLayout();
+}
+
+// ------------------------------------------------------------------ settings
+//
+// Generated from GET /api/settings, which comes from the schema in config.py: a new tunable
+// there appears here with no change to this file. A field is sent only when it differs from
+// what the server reported; "Default" sends null, which removes the key from the file.
+
+const settings = { data: null, edits: {} };
+
+function settingValueText(s, v) {
+  return s.unit ? `${v} ${s.unit}` : String(v);
+}
+
+function renderSettings() {
+  const root = $("#settings");
+  root.replaceChildren();
+  const data = settings.data;
+  if (!data) return;
+  $("#settings-hint").textContent = data.path;
+  for (const g of data.groups) {
+    const items = data.settings.filter((s) => s.group === g.id);
+    if (!items.length) continue;
+    const rows = items.map(settingRow);
+    root.append(el("details", { class: "sgroup", open: g.id !== "advanced" ? "" : null },
+      el("summary", { text: g.label }), ...rows));
+  }
+  syncSettingsBar();
+}
+
+function settingRow(s) {
+  const edited = Object.prototype.hasOwnProperty.call(settings.edits, s.key);
+  const shown = edited ? settings.edits[s.key] : s.value;
+  const lock = !s.editable ? s.why_locked || "Not editable here."
+    : s.source === "env" ? `Fixed by the environment variable ${s.env}.` : "";
+  const numeric = s.kind === "int" || s.kind === "float";
+  const input = el("input", {
+    id: `set-${s.key}`,
+    type: numeric ? "number" : "text",
+    value: shown === null ? s.default : shown,
+    min: numeric ? s.min : null,
+    max: numeric ? s.max : null,
+    step: s.kind === "int" ? "1" : numeric ? "any" : null,
+    disabled: lock ? "" : null,
+    spellcheck: "false",
+    autocomplete: "off",
+    oninput: (ev) => {
+      const raw = ev.target.value;
+      const val = numeric ? (raw === "" ? raw : Number(raw)) : raw;
+      if (val === s.value) delete settings.edits[s.key]; else settings.edits[s.key] = val;
+      syncSettingsBar();
+    },
+  });
+  const badges = [];
+  if (s.source === "file") badges.push(el("span", { class: "badge", text: "customised" }));
+  if (s.restart) badges.push(el("span", { class: "badge warn", text: "restart to apply" }));
+  if (lock) badges.push(el("span", { class: "badge", text: "locked" }));
+  const reset = !lock && (s.in_file || edited) ? el("button", {
+    class: "ghost small", text: "Default", title: `Back to ${settingValueText(s, s.default)}`,
+    onclick: () => { settings.edits[s.key] = null; renderSettings(); },
+  }) : null;
+  if (edited && settings.edits[s.key] === null) input.value = s.default;
+  return el("div", { class: "srow" },
+    el("label", { for: `set-${s.key}`, text: s.label }),
+    el("div", { class: "sfield" }, input, s.unit ? el("span", { class: "unit", text: s.unit }) : null, reset),
+    el("div", { class: "sbadges" }, ...badges),
+    s.help || lock ? el("div", { class: "hint", text: [s.help, lock].filter(Boolean).join(" ") }) : null);
+}
+
+function syncSettingsBar() {
+  const n = Object.keys(settings.edits).length;
+  $("#settings-save").disabled = n === 0;
+  $("#settings-discard").disabled = n === 0;
+  $("#settings-save").textContent = n ? `Save ${n} change${n === 1 ? "" : "s"}` : "Save changes";
+}
+
+async function loadSettings() {
+  settings.data = await api("/api/settings");
+  settings.edits = {};
+  renderSettings();
+}
+
+async function saveSettings() {
+  try {
+    const res = await api("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: settings.edits }),
+    });
+    settings.data = res;
+    settings.edits = {};
+    renderSettings();
+    const n = Object.keys(res.changed || {}).length;
+    const restart = (res.restart || []).map((k) => res.settings.find((s) => s.key === k).label);
+    toast(n ? `Saved ${n} setting${n === 1 ? "" : "s"}.${restart.length
+      ? ` Restart the service for: ${restart.join(", ")}.` : " Applied now."}` : "Nothing changed.",
+      "ok");
+  } catch (err) {
+    toast(`Not saved: ${err.message}`, "bad");   // all or nothing: the edits stay on screen
+  }
+}
+
+$("#settings-save").addEventListener("click", saveSettings);
+$("#settings-discard").addEventListener("click", () => { settings.edits = {}; renderSettings(); });
+
 $("#refresh").addEventListener("click", refresh);
 
 let searchTimer = null;
@@ -345,6 +609,8 @@ $("#search").addEventListener("input", (ev) => {
     await loadState();
     await loadCatalog();
     await loadLibrary();
+    await loadLayout();
+    await loadSettings();
   } catch (err) {
     toast(`Startup problem: ${err.message}`, "bad");
   }

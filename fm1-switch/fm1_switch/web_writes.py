@@ -12,7 +12,7 @@ import os
 import time
 from pathlib import Path
 
-from . import guided, library, maker_install, mflasher, packages, registry
+from . import config, guided, library, maker_install, mflasher, packages, registry
 from .backups import backups_dir, prune_auto_backups
 from .guided import WriteFailed, WriteRefused
 from .web_state import APP, _sha256
@@ -37,8 +37,7 @@ def _check_package(detail: Path, expected_sha: str) -> Path:
 
 
 def flash_log_path() -> Path:
-    raw = os.environ.get("FM1_FLASHLOG")
-    return Path(raw).expanduser() if raw else Path("~/fm1-flash.log").expanduser()
+    return config.path("flashlog")
 
 
 def recent_flashes(limit: int = 8) -> list[dict]:

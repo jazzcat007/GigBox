@@ -7,12 +7,12 @@ import shutil
 from pathlib import Path
 
 from . import guided
-from .config import path_setting
+from . import config
 
 
 #: Saved per-unit flash images live here (used for region comparison and restore).
 def backups_dir() -> Path:
-    return path_setting("FM1_BACKUPS", "backups", "~/fm1-backups")
+    return config.path("backups")
 
 def backups_for(unit_id: str, limit: int = 40) -> list[dict]:
     """Saved whole-flash images that belong to ``unit_id`` (matched on the flash id inside
@@ -56,13 +56,13 @@ def backup_space() -> dict:
         free = None
     return {"used_kb": used // 1024, "free_mb": None if free is None else free // (1024 * 1024)}
 
-#: Automatic pre-write images kept per unit. Backups you made by hand live outside auto/
-#: and are never touched.
-AUTO_BACKUPS_KEPT = 20
-
-def prune_auto_backups(directory: Path, keep: int = AUTO_BACKUPS_KEPT) -> list[str]:
+def prune_auto_backups(directory: Path, keep: int | None = None) -> list[str]:
     """Delete all but the newest ``keep`` images per unit in ``directory`` (the auto/ dir).
-    Returns the names removed. Only .bin/.json pairs found in this one directory."""
+    Returns the names removed. Only .bin/.json pairs found in this one directory.
+    ``keep`` defaults to the ``auto_backups_kept`` setting; backups made by hand live
+    outside auto/ and are never touched."""
+    if keep is None:
+        keep = int(config.value("auto_backups_kept"))
     by_unit: dict[str, list[tuple[str, Path]]] = {}
     for meta in directory.glob("*.json"):
         try:

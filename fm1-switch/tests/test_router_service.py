@@ -367,3 +367,73 @@ def test_run_follows_a_reloaded_patch_without_a_restart(env):
     assert svc.patch.name == "rig"
     assert any("patch 'rig': 1 route(s)" in m for m in logs)
     assert seq.connected == set(), "and it still lets go on stop"
+
+
+# ------------------------------------------------------------ external devices (Oxi One)
+
+ACONNECT = """client 0: 'System' [type=kernel]
+    0 'Timer           '
+client 20: 'Felucca' [type=kernel,card=1]
+    0 'Felucca MIDI 1  '
+client 40: 'OXI ONE' [type=kernel,card=6]
+    0 'OXI ONE MIDI 1  '
+    1 'OXI ONE MIDI 2  '
+client 128: 'fm1-router' [type=user,pid=1115]
+    0 'router          '
+"""
+
+
+def test_external_clients_finds_the_oxi_by_name_and_skips_ambiguous_ones():
+    assert router_service.external_clients(ACONNECT) == {"oxi": 40}
+    twice = ACONNECT + "client 44: 'OXI ONE' [type=kernel,card=7]\n"
+    assert router_service.external_clients(twice) == {}
+    assert router_service.external_clients("client 20: 'Felucca' [type=kernel,card=1]") == {}
+
+
+def test_oxi_notes_reach_each_unit_only_on_that_units_channels(env):
+    seq, present, holds, logs, svc = env
+    present["oxi"] = 40
+    svc.set_patch(Patch("oxi", (
+        rt("oxi", "fm1-a", channels=(1, 2, 3, 4), block=("sysex",)),
+        rt("oxi", "fm1-b", channels=(5, 6, 7, 8), block=("sysex",)),
+        rt("oxi", "fm1-c", channels=(10,), block=("sysex",)),
+    )))
+    seq.incoming = [(40, bytes([0x92, 60, 100])), (40, bytes([0x94, 62, 90])),
+                    (40, bytes([0x99, 36, 127])), (40, bytes([0x9A, 40, 80]))]
+    svc.pump()
+    assert (20, bytes([0x92, 60, 100])) in seq.sent
+    assert (24, bytes([0x94, 62, 90])) in seq.sent
+    assert (28, bytes([0x99, 36, 127])) in seq.sent
+    assert len(seq.sent) == 3  # channel 11 has no route here, so it goes nowhere
+
+
+def test_oxi_clock_passes_through_the_channel_filter(env):
+    seq, present, holds, logs, svc = env
+    present["oxi"] = 40
+    svc.set_patch(Patch("oxi", (rt("oxi", "fm1-a", channels=(1,)),)))
+    seq.incoming = [(40, bytes([0xF8])), (40, bytes([0xFA]))]
+    svc.pump()
+    assert seq.sent == [(20, bytes([0xF8])), (20, bytes([0xFA]))]
+
+
+def test_master_clock_and_panic_leave_the_oxi_alone(env):
+    from fm1_switch import clock as clocklib
+
+    seq, present, holds, logs, svc = env
+    present["oxi"] = 40
+    svc.set_patch(Patch("oxi", (rt("oxi", "fm1-a"),)))
+    svc.apply_clock(clocklib.ClockSettings(120.0, True, ()))
+    assert all(client != 40 for client, _ in seq.sent)
+    seq.sent.clear()
+    svc.panic()
+    assert seq.sent and all(client != 40 for client, _ in seq.sent)
+
+
+def test_a_route_may_name_the_oxi_in_the_web_api(tmp_path):
+    from fm1_switch import web_router
+
+    store = tmp_path / "patches.json"
+    web_router.add_route("oxi", {"source": "oxi", "dest": "fm1-a", "channels": [1, 2]},
+                         store_file=store)
+    with pytest.raises(Exception):
+        web_router.add_route("oxi", {"source": "toaster", "dest": "fm1-a"}, store_file=store)

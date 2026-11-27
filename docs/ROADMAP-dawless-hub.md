@@ -83,7 +83,9 @@ no MIDI configuration. Firmware-side settings stay useful for rigs that run with
 - **The Pi becomes the single point of failure for routing.** Units must still work directly if
   the Pi is off. Routing only adds.
 - **Power:** several USB devices on the Pi need a powered hub. Measure it before relying on it.
-- **Same touch UI** on the HDMI screen and in the headless phone UI. The expert page stays at
+- **Same touch UI** on the HDMI screen and in the headless phone UI. The hub needs no screen on
+  the Pi: routing, the clock and panic are all reachable from the phone page (`fm1-switch route`
+  and `fm1-switch clock` work from a shell too). The expert page stays at
   `/expert`.
 - **Keep the device layer separate** from routing, as in the multi-device goal, so DrumBoy Pro,
   Akai and other devices can join later.
@@ -203,10 +205,28 @@ filter are still CLI only. **Verified in the browser at 800x480 and phone width,
 and JS); deployed to the Pi on :8080 (the port-80 phone service needs `sudo systemctl restart
 fm1-web-headless`). Not exercised on the Pi: PANIC and RUN (they send MIDI to the units).**
 
+**Master clock and transport (2026-11-25, built and tested; NOT yet run on the bench).**
+`fm1_switch/clock.py` is the timing core (24 pulses per quarter note on a fixed grid, so a late
+poll does not drift; a stall of more than 8 ticks drops the backlog instead of bursting).
+Settings live in `~/fm1-clock.json` (`bpm` 20 to 300, `running`, `targets`; no targets means every
+running unit). The running router follows the file like it follows the active patch, attaches the
+targets (even if no route names them), sends MIDI start, then clock ticks from its own loop (ALSA
+stays single-threaded), and sends stop before letting a unit go: on STOP, when a unit leaves the
+targets, and when the router exits. A soft key or flash still frees every unit first, and a
+released unit simply gets no clock. **A router that starts always starts with the clock stopped**,
+so a reboot never sets the units' sequencers running. Control: `fm1-switch clock [status] | set BPM
+| start | stop | targets [UNIT ...]`; `POST /api/router/clock` (starting needs `confirm: "clock"`);
+and a CLOCK screen on the ROUTES page (tempo ±1/±10, target units, START with a confirm, STOP).
+Note: a route that forwards clock from one unit to another **and** the master clock would double
+the ticks; block clock on such routes (`--block clock`). **Unverified on hardware:** that the units
+follow the clock, tick jitter over USB, and whether a unit ignores start/stop. Tap tempo, swing and
+divide/multiply are not built.
+
 **Not yet done:**
 
 1. Check by ear that B plays what A sends (match the channel with `--remap`).
-2. Clock and transport master, and the powered-hub check.
+2. Run the master clock on the bench (a firmware that follows MIDI clock), measure its jitter, and
+   do the powered-hub check.
 
 ## Suggested order
 
