@@ -56,3 +56,12 @@ def test_status_says_not_running_and_usage_is_exit_2(capsys):
     assert cli.main(["route"]) == 2
     assert cli.main(["route", "frobnicate"]) == 2
     assert cli.main(["route", "run", "nope"]) in (1, 2)
+
+
+def test_shift_is_accepted_and_refused_together_with_remap(patches, capsys):
+    assert cli.main(["route", "add", "rig", "oxi", "fm1-b", "--channels", "5,6,7,8",
+                     "--shift", "-4"]) == 0
+    saved = json.loads(patches.read_text())["patches"][0]["routes"][0]
+    assert saved["shift"] == -4 and saved["channels"] == [5, 6, 7, 8]
+    assert cli.main(["route", "add", "rig", "oxi", "fm1-c", "--shift", "2", "--remap", "3"]) == 1
+    assert "not both" in capsys.readouterr().err

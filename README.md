@@ -67,7 +67,7 @@ that. The ones you would notice:
 
 | | |
 |---|---|
-| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash |
+| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash; **putting every letter back on the right unit after the cables move** (RE-REGISTER FLEET, 2026-11-27); an Oxi One driving four units through the router with channel layouts (by ear, 2026-11-27) |
 | 🧪 tested with fakes only | registering a new unit — reading its flash id in download mode and binding it to a sticker, from the panel (FEAT-01); visible failure explanations, BACK UP NOW / delete backup, unit names, UPDATE badges, GET FIRMWARE, flash SEVERAL units |
 | ⚠️ known problems | the panel's held-press and modal-overlap fixes (audit UX-01/02) are code-tested, not yet re-proven on the panel — **do the stylus-hold check before trusting it**; the unguarded CLI `install` write path was removed (SAFE-01) — the panel is the only writer |
 
@@ -94,6 +94,22 @@ that. The ones you would notice:
   fleet screen still reads its port symlinks on a mapped bench (audit ARCH-02), and its
   permission lines let m-flasher reach units without root. Writes by port name are gone.
 
+### After you move the cables
+
+A letter (A, B, C, ...) belongs to a unit's flash id, not to a USB port, so moving a unit to another
+hub port, swapping a hub, or replugging everything never changes which letter is which. What goes
+stale are the saved ports and the running fingerprints the panel uses to recognise a unit without
+opening it, and units that look alike while running cannot be told apart from USB. You will see a
+letter say **NOT CONNECTED** while the same units show as **?**, or a letter drawn with a `~`
+(placed by port only). The panel then shows **FLEET NOT REGISTERED** above the unit grid, with a
+**RE-REGISTER FLEET** button.
+
+It puts the unmatched units into download mode, reads each flash id, matches it to its letter **by
+id**, restarts them and re-learns their ports. It **never writes flash and never gives a new
+letter** (a unit nobody owns is reported, and REGISTER stays deliberate). Sound stops for about half
+a minute while the units restart. Full walk-through, the messages and what to do about each:
+[`docs/GUIDE-registering-units.md`](docs/GUIDE-registering-units.md).
+
 ## The safety model, in eight lines
 
 1. Never guess which unit. An unknown unit is shown as `?` with its id.
@@ -112,12 +128,17 @@ enforced and where it currently is not.
 unit, or write without taking a backup first.
 
 **What the router does, and does not do:** the optional MIDI router (see the install notes)
-connects the units' USB MIDI ports through the Pi, with saved patches, per-route channel
-remap and filters, and a PANIC button. It never touches a unit's flash. It is young: a live
-route from one unit to another and attaching all four units are verified on the bench, but
-round-trip latency to a unit and what the receiving firmware does with the notes are not.
-Under-voltage was seen with four units on the Pi's own ports, so use a powered hub. Its status
-is in [`docs/ROADMAP-dawless-hub.md`](docs/ROADMAP-dawless-hub.md).
+connects the units' USB MIDI ports, and a USB controller such as an **Oxi One**, through the Pi, with
+saved patches, per-route channel remap, shift and filters, a master clock, and a PANIC button. **Channel
+layouts** hand each unit a slice of the controller's 16 channels (A 1-4, B 5-8, a one-voice unit 1, ...)
+and translate it onto the channels the unit listens on, so nothing on the units needs setting, up to
+sixteen one-channel units. It never touches a unit's flash and lets go of every unit before a flash.
+Verified on the bench: all four units attach, a live route from one unit to another, the soft key
+while the router holds the units, and an Oxi One driving four units. The clock is tested against a
+fake sequencer only; round-trip latency to a unit is not measured. Under-voltage was seen with four
+units on the Pi's own ports, so use a powered hub. The guide is
+[`docs/GUIDE-midi-hub.md`](docs/GUIDE-midi-hub.md); the status and ideas are in
+[`docs/ROADMAP-dawless-hub.md`](docs/ROADMAP-dawless-hub.md).
 
 ## Install (current, bench-specific)
 

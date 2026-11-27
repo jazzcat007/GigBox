@@ -13,6 +13,18 @@ It is not yet merged to `main`. The bench verification that remains is in
 
 ### Added
 
+- **Oxi One and channel layouts** (dawless hub). A USB MIDI controller found by name (the Oxi One is
+  built in, as `oxi`) can be a route's source or destination; it is left out of the master clock and
+  of panic. Routes gain a `shift` (move channels up or down, `route add --shift N`), and **layouts**
+  (`fm1_switch/layouts.py`) turn each unit's channel count and its own listening channel into
+  routes: a `packed` and a `blocks` layout are always available, and custom ones are saved by name. The
+  expert page has a Channel layout section (`/api/router/layouts*`), and `fm1-switch route layout
+  list|show|apply|units` does the same from a shell. Applying writes an ordinary patch,
+  `auto-<layout>`, and makes it active. Works for up to sixteen one-channel units (the unit cap
+  went from 8 to 16). Verified on the bench 2026-11-27 with an Oxi One driving four units.
+  Guide: `docs/GUIDE-midi-hub.md`.
+- **Guides for registering units and for the MIDI hub** (`docs/GUIDE-registering-units.md`,
+  `docs/GUIDE-midi-hub.md`), including what to do after the USB cables or a hub move.
 - **RE-REGISTER FLEET: put the units back on their profiles after a reconnect.** When the cables move, the
   registry's saved ports and fingerprints go stale and running units that look alike (same
   firmware, same `bcdDevice`) cannot be told apart from USB: the letters show NOT CONNECTED

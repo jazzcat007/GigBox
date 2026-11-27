@@ -3,6 +3,8 @@
 | File | What it is |
 |---|---|
 | [../CHANGELOG.md](../CHANGELOG.md) | What phase B changed, grouped by audit item, with the commit that did each. |
+| [GUIDE-registering-units.md](GUIDE-registering-units.md) | How a unit gets its letter, why moving cables or a hub makes letters show NOT CONNECTED, and what RE-REGISTER FLEET does about it, message by message. |
+| [GUIDE-midi-hub.md](GUIDE-midi-hub.md) | The Pi as a MIDI hub: patches and routes, a USB controller such as an Oxi One, channel layouts (packed, blocks, custom), the master clock, panic. |
 | [AUDIT-fleet-manager.md](AUDIT-fleet-manager.md) | Full audit (2026-11-23): code, safety model, tests, UX, docs, security, open-source readiness, and the prioritised roadmap. Start here for the current state. |
 | [REPORT-phase-b-gate.md](REPORT-phase-b-gate.md) | Phase B gate report (2026-11-23): UX-01, the SEC request gates/token/bind/static/umask, SAFE-01 + fleetctl retirement — changes per commit, tests, the 11 invariants' enforcement sites, and the owner hardware checklist. |
 | [REPORT-phase-b-p1.md](REPORT-phase-b-p1.md) | Phase B/p1 report (2026-11-23): registering a unit from the panel (B4, FEAT-01) — the scan/bind endpoints, the panel flow, the refusals — plus the pre-publication scrub (fake unit ids, placeholder identity), per-commit suites, the sweep outputs, and the owner's on-panel registration walk. |

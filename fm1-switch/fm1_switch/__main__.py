@@ -40,7 +40,7 @@ USAGE = """usage:
   fm1-switch units              what the Pi thinks each unit is, and how sure it is
   fm1-switch register <slot>    learn a unit's sticker by having it power on alone
   fm1-switch route list|show NAME|delete NAME|status
-  fm1-switch route add NAME SRC DEST [--channels 1,2] [--remap N] [--transpose N]
+  fm1-switch route add NAME SRC DEST [--channels 1,2] [--remap N | --shift N] [--transpose N]
                                 [--block cc,clock] [--velocity X] [--range LO-HI]
                                 add a one-way MIDI route between two units to a saved patch
   fm1-switch route run [NAME]   run a patch (the dawless hub router; default patch name
@@ -559,6 +559,8 @@ def cmd_route(args: list[str]) -> int:
                     kw["channels"] = tuple(int(x) for x in val.split(","))
                 elif flag == "--remap":
                     kw["remap_to"] = int(val)
+                elif flag == "--shift":
+                    kw["shift"] = int(val)
                 elif flag == "--transpose":
                     kw["transpose"] = int(val)
                 elif flag == "--block":
