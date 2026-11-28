@@ -1,0 +1,20 @@
+// Lets members of the netdev group manage the Pi's WiFi and run a password-protected hotspot
+// without sudo, so the fm1-net service (a user service) can raise the hotspot when no saved
+// network connects. Without this, NetworkManager refuses from a service or an SSH session:
+// `nmcli general permissions` shows wifi.share.protected "no" and the others "auth".
+//
+// Install once, as root:
+//   sudo cp 50-fm1-wifi.rules /etc/polkit-1/rules.d/50-fm1-wifi.rules
+// Remove it with: sudo rm /etc/polkit-1/rules.d/50-fm1-wifi.rules
+//
+// It is only these three actions, for one group, and it changes nothing else.
+polkit.addRule(function (action, subject) {
+    var ours = [
+        "org.freedesktop.NetworkManager.settings.modify.system",
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.wifi.share.protected"
+    ];
+    if (ours.indexOf(action.id) >= 0 && subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});

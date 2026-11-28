@@ -74,7 +74,8 @@ no MIDI configuration. Firmware-side settings stay useful for rigs that run with
   step, with the existing flash and backup safeguards.
 - **Unit health:** which units are present, which firmware each runs, power draw and USB errors.
 - **Hotplug:** when a unit is replugged or powers on, its routes come back on their own.
-- **Remote access** over the home network only. Nothing internet-facing by default.
+- **Remote access** over the home network only. Nothing internet-facing by default. Away from home, the Pi's own WiFi network is planned in
+  [ROADMAP-field-network.md](ROADMAP-field-network.md).
 
 ## Design constraints (these protect the firmware work)
 

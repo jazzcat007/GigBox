@@ -9,10 +9,9 @@ and the Pi never guesses which unit is which.
 
 ### Screenshots
 
-The touch UI at 800x480, the size of the optional 5-inch panel (the same pages are served to a
-phone, which is all you need), and the admin page, captured live from a real bench. Unit ids are
-shown as `0001` to `0004`, not the real ones. A tour of every screen is in
-[`docs/GUIDE-screens.md`](docs/GUIDE-screens.md).
+The touch UI at 800x480, the size of the optional 5-inch panel (the same pages are served to a phone, which is all you
+need), and the admin page, captured live from a real bench. Unit ids are shown as `0001` to `0004`, not the real ones. A
+tour of every screen is in [`docs/GUIDE-screens.md`](docs/GUIDE-screens.md).
 
 | Fleet | One unit |
 |---|---|
@@ -26,12 +25,18 @@ shown as `0001` to `0004`, not the real ones. A tour of every screen is in
 |---|---|
 | ![A patch: its routes](docs/screenshots/patch.png) | ![The master clock](docs/screenshots/clock.png) |
 
-The admin page (`/index.html`): channel layouts, which map a controller's channels onto each unit so
-nothing on the units needs setting, and the settings.
+The admin page (`/index.html`): channel layouts, which map a controller's channels onto each unit so nothing on the units
+needs setting, and the settings, including the WiFi hotspot.
 
 | Channel layout | Settings |
 |---|---|
-| ![Channel layout](docs/screenshots/admin-layout.png) | ![Settings](docs/screenshots/admin-settings.png) |
+| ![Channel layout](docs/screenshots/admin-layout.png) | ![Settings, including the WiFi hotspot](docs/screenshots/admin-settings.png) |
+
+Away from home, on the Pi's own WiFi hotspot: the form a phone sees first, and what the Pi shows with no internet.
+
+| First-use passphrase form | GET FIRMWARE offline |
+|---|---|
+| ![The form a phone sees first on the hotspot](docs/screenshots/setup-wifi.png) | ![GET FIRMWARE with no internet](docs/screenshots/offline-get.png) |
 
 A `~` after a unit's letter means it was matched by USB port, not by a readable id (see
 [how it works](#how-it-works)).
@@ -80,7 +85,7 @@ that. The ones you would notice:
 
 | | |
 |---|---|
-| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash; **putting every letter back on the right unit after the cables move** (RE-REGISTER FLEET, 2026-11-27); an Oxi One driving four units through the router with channel layouts (by ear, 2026-11-27); **an UPDATE badge appearing for a unit and the update flashed from the panel** (sloopDX 4.0.1 to 4.0.2 on unit A, with the automatic backup taken first, 2026-11-28) |
+| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash; **putting every letter back on the right unit after the cables move** (RE-REGISTER FLEET, 2026-11-27); an Oxi One driving four units through the router with channel layouts (by ear, 2026-11-27); **an UPDATE badge appearing for a unit and the update flashed from the panel** (sloopDX 4.0.1 to 4.0.2 on unit A, with the automatic backup taken first, 2026-11-28); **the Pi's own WiFi hotspot taking over when the WiFi is lost, a phone joining it and never being dropped, the Pi returning when the phone leaves, and the first-use passphrase form** (2026-11-28) |
 | 🧪 tested with fakes only | registering a new unit — reading its flash id in download mode and binding it to a sticker, from the panel (FEAT-01); visible failure explanations, BACK UP NOW / delete backup, unit names, GET FIRMWARE, flash SEVERAL units |
 | ⚠️ known problems | the panel's held-press and modal-overlap fixes (audit UX-01/02) are code-tested, not yet re-proven on the panel — **do the stylus-hold check before trusting it**; the unguarded CLI `install` write path was removed (SAFE-01) — the panel is the only writer |
 
@@ -123,6 +128,31 @@ letter** (a unit nobody owns is reported, and REGISTER stays deliberate). Sound 
 a minute while the units restart. After a plain power cycle it runs by itself once the units have
 settled (a setting turns that off). Full walk-through, the messages and what to do about each:
 [`docs/GUIDE-registering-units.md`](docs/GUIDE-registering-units.md).
+
+### Away from home: the Pi's own WiFi
+
+At a gig or a rehearsal there is no known WiFi. With the fallback on, **when the Pi cannot connect to any saved network
+it makes its own** (`FM-Pi`), you join it from a phone, and the same UI opens at `http://fm-pi.local/`. When your WiFi
+is back and nobody is on the hotspot, the Pi goes back to it by itself. It never creates, changes or deletes a saved
+network.
+
+The hotspot starts with a **published default passphrase**, so the Pi makes you replace it: the first phone to open any
+page on the hotspot is taken to a form that asks you to choose your own, and can reach nothing else until it does. Better
+still, choose it once at home. To set it up (details, options and troubleshooting in
+[`docs/GUIDE-wifi-hotspot.md`](docs/GUIDE-wifi-hotspot.md)):
+
+```bash
+sudo cp ~/fm1/fm1-switch/polkit/50-fm1-wifi.rules /etc/polkit-1/rules.d/ && sudo systemctl restart polkit   # once
+fm1-switch net setup                       # makes the hotspot profile; offers to choose your passphrase
+fm1-switch net passphrase --prompt         # or choose it here
+cp ~/fm1/fm1-switch/systemd/fm1-net.service ~/.config/systemd/user/ && systemctl --user enable --now fm1-net
+```
+
+**Without internet**, things that need the Firmware Hub say so at once instead of hanging: the saved catalogue is shown
+marked offline, downloads are refused with an explanation, and firmware already on the Pi can still be flashed (to add
+one, copy a `.fwsc` from a USB stick with `fm1-switch import`). Verified on a real Pi: the fallback from the service, a
+joined phone never dropped, the return, and the first-use form; a bench test you can run yourself is in
+[`docs/BENCH-wifi-fallback.md`](docs/BENCH-wifi-fallback.md).
 
 ## The safety model, in eight lines
 

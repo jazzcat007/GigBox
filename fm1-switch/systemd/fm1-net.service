@@ -1,0 +1,26 @@
+# The WiFi fallback supervisor (docs/ROADMAP-field-network.md): when no saved WiFi network
+# connects, it raises the Pi's own network (a hotspot) so a phone can still reach the UI, and
+# it goes back to a saved network when one returns and nobody is joined to the hotspot.
+#
+# NOT installed by default. Read "net status" first and try "net up --yes" at the bench
+# (it puts the saved network back by itself). Changing WiFi needs no sudo if the user is in
+# the netdev group (UNVERIFIED: that is part of the bench test). A *user* unit, like fm1-web.
+[Unit]
+Description=FM-1 WiFi fallback to the Pi's own hotspot
+Documentation=https://thefirmwarehub.com/
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fm1/fm1-switch
+ExecStart=%h/fm1/fm1-switch/.venv/bin/fm1-switch net watch
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

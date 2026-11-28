@@ -260,7 +260,8 @@ def _sha256(path: Path) -> str:
 
 def _catalog_meta(cat: hub.Catalog | None, error: str | None) -> dict:
     if cat is None:
-        return {"available": False, "error": error, "attribution": hub.ATTRIBUTION}
+        return {"available": False, "error": error, "attribution": hub.ATTRIBUTION,
+                "online": hub.online(), "offline_note": hub.OFFLINE_NOTE}
     return {
         "available": True,
         "count": len(cat.entries),
@@ -268,6 +269,8 @@ def _catalog_meta(cat: hub.Catalog | None, error: str | None) -> dict:
         "age_hours": round(cat.age_seconds / 3600, 1),
         "stale": cat.stale,
         "from_cache": cat.from_cache,
+        "online": hub.online(),
+        "offline_note": hub.OFFLINE_NOTE,
         "error": error,
         "attribution": hub.ATTRIBUTION,
         "stale_caveat": hub.STALE_CAVEAT,

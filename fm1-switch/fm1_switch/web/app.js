@@ -207,7 +207,12 @@ function renderHub() {
     } else if (have) {
       actions.append(el("span", { class: "tag ok", text: "downloaded" }));
     } else {
-      actions.append(el("button", { text: "Download", onclick: () => download(e) }));
+      actions.append(el("button", {
+        text: "Download",
+        disabled: isOffline() ? "" : null,
+        title: isOffline() ? "Offline: connect the Pi to a network with internet to download" : null,
+        onclick: () => download(e),
+      }));
     }
 
     host.append(el("div", { class: "card" },
@@ -244,7 +249,9 @@ async function download(e) {
     toast(`${e.name} verified and saved as ${res.name}`, "ok");
     await loadLibrary();
   } catch (err) {
-    toast(`Download refused: ${err.message}`, "bad");
+    // The Pi's own words say what still works when it is offline; show them as a note, not a fault.
+    toast(/offline/i.test(err.message) ? err.message : `Download refused: ${err.message}`,
+          /offline/i.test(err.message) ? "" : "bad");
   }
 }
 
@@ -271,25 +278,39 @@ function renderKinds() {
   }
 }
 
+function showOfflineNote(text) {
+  const n = $("#offline-note");
+  n.textContent = text || "";
+  n.hidden = !text;
+}
+
+function isOffline() { return !!(state.meta && state.meta.online === false); }
+
 function renderHubMeta() {
   const badge = $("#hub-badge");
+  const offline = isOffline();
   if (!state.meta || !state.meta.available) {
     badge.className = "badge bad";
-    badge.textContent = "hub offline";
+    badge.textContent = offline ? "offline" : "hub offline";
     badge.title = (state.meta && state.meta.error) || "catalogue unavailable";
-    $("#attribution").textContent = "";
+    $("#attribution").textContent = offline && state.meta ? state.meta.offline_note : "";
+    showOfflineNote(offline && state.meta ? state.meta.offline_note : "");
     return;
   }
   const stale = state.meta.stale;
-  badge.className = `badge ${stale ? "warn" : "ok"}`;
-  badge.textContent = stale ? "hub cached" : "hub ok";
-  badge.title = `${state.meta.count} firmwares · ${state.meta.updated}`;
+  badge.className = `badge ${offline || stale ? "warn" : "ok"}`;
+  badge.textContent = offline ? "offline" : stale ? "hub cached" : "hub ok";
+  badge.title = offline
+    ? `No internet. Showing the catalogue saved ${state.meta.age_hours} h ago · ${state.meta.count} firmwares`
+    : `${state.meta.count} firmwares · ${state.meta.updated}`;
+  showOfflineNote(offline
+    ? `Offline: showing the catalogue saved ${state.meta.age_hours} hours ago. ${state.meta.offline_note}` : "");
   $("#search").placeholder = `Search ${state.meta.count} firmwares…`;
   $("#attribution").replaceChildren(
     document.createTextNode(state.meta.attribution + " "),
-    el("span", { text: stale
-      ? "Showing a cached copy — press Refresh with Wi-Fi to update."
-      : "" }),
+    el("span", { text: offline
+      ? `Offline: showing the catalogue saved ${state.meta.age_hours} hours ago. ${state.meta.offline_note}`
+      : stale ? "Showing a cached copy — press Refresh with Wi-Fi to update." : "" }),
   );
 }
 

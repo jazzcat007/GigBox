@@ -8,7 +8,7 @@ into the next.
 
 import pytest
 
-from fm1_switch import registry
+from fm1_switch import hub, registry
 
 
 @pytest.fixture(autouse=True)
@@ -16,3 +16,10 @@ def _fresh_identity_cache():
     registry.forget_identities()
     yield
     registry.forget_identities()
+
+
+@pytest.fixture(autouse=True)
+def _online_by_default(monkeypatch):
+    """No test may probe the real network: the hub is reachable unless a test says otherwise
+    (tests/test_offline.py does, and tests the connectivity check itself)."""
+    monkeypatch.setattr(hub, "online", lambda **kw: True)

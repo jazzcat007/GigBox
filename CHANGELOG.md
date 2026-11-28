@@ -13,6 +13,25 @@ It is not yet merged to `main`. The bench verification that remains is in
 
 ### Added
 
+- **Things that need the internet fail gracefully when the Pi is offline** (on its own hotspot, or with no
+  network). `hub.online()` is a cached connectivity check (no default route, or the hub unreachable within a
+  few seconds); with it, the catalogue is served from the saved copy at once, marked offline with its age,
+  instead of waiting out the 60 s timeout, and a download is refused immediately with a plain message
+  (`hub.HubOffline`, HTTP 503 with `offline: true`) that says what still works and offers `fm1-switch import`.
+  The admin page shows an **offline** badge and greys the Download buttons; the touch screen's GET FIRMWARE says
+  so; `fm1-switch hub` and `fetch` print it. `FM1_OFFLINE=1` forces offline. Tests: `tests/test_offline.py`.
+- **WiFi fallback: the Pi makes its own hotspot when no saved network connects** (bench test pending).
+  `fm1_switch/netctl.py` (the only code that runs `nmcli`) and `fm1_switch/netwatch.py` (the rules and
+  the loop), `fm1-switch net status|setup|passphrase|watch|up|down`, a *WiFi and hotspot* settings group,
+  `systemd/fm1-net.service` and `polkit/50-fm1-wifi.rules` (neither installed by default). The hotspot
+  is `FM-Pi` with a **published default passphrase** that the Pi makes you replace: the first phone to
+  open any page on the hotspot is taken to a form (`fm1_switch/wifi_setup.py`) that makes it choose a passphrase
+  and can reach nothing else until it does; the touch panel and the house network are never gated. The setting
+  `net_default_passphrase` is `gate` (default), `refuse` (the hotspot will not come up with the default) or
+  `allow`; `net status` and `net setup` say so, and `net passphrase --prompt` changes it from the Pi. It goes back to a saved network only when no phone is joined, and
+  never creates or changes a saved network. Guide: `docs/GUIDE-wifi-hotspot.md`; bench test:
+  `docs/BENCH-wifi-fallback.md`. Verified on a real Pi: the whole fallback from the service (loss, hotspot, a joined phone is never dropped, return), the
+  first-use passphrase form, and the timed revert; plus a synthetic end-to-end test.
 - **Automatic re-register after a power-up.** Turning units off and on re-enumerates all of them,
   and look-alike units can then only be told apart by port plus USB device number, so the panel
   asked for RE-REGISTER FLEET after every power cycle. The web server now runs it unprompted

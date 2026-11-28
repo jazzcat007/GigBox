@@ -258,3 +258,4 @@ input.chan { flex: 0 0 4.2em; width: 4.2em; text-align: center; }
 #layout .settings-bar { position: static; padding: 10px 14px; background: transparent; border-top: 1px solid var(--line); }
 .sfield select { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
 .sfield input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; }
+.offline-note { background: #3a2a10; border: 1px solid #8a6a1f; border-radius: 10px; padding: 10px 14px; color: #f0d9a8; }

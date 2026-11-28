@@ -105,10 +105,33 @@ the units changes. See [GUIDE-midi-hub.md](GUIDE-midi-hub.md).
 
 ### Settings
 
-![Settings: rig, the automatic re-register option, and the MIDI router](screenshots/admin-settings.png)
+![Settings: rig, the automatic re-register option, the MIDI router, and the WiFi hotspot](screenshots/admin-settings.png)
 
-Every tunable lives here, in groups (the screenshot shows two open). A yes/no setting is a checkbox.
+Every tunable lives here, in groups (the screenshot shows three open, including **WiFi and hotspot**: the fallback
+mode, how long to wait, the hotspot's name, band and channel, and what to do while its passphrase is still the
+published default). A yes/no setting is a checkbox.
 *Re-register units after a power-up* is the automatic version of RE-REGISTER FLEET, and *Wait for the
 units to settle* sets how long the bus must be quiet first. A few settings say *restart to apply*;
 a few, such as the flasher program, are shown but locked on purpose. Nothing is saved until you press
 **Save changes**.
+
+## Away from home
+
+When the Pi runs its own WiFi hotspot (see [GUIDE-wifi-hotspot.md](GUIDE-wifi-hotspot.md)), two more screens matter.
+
+### The first-use passphrase form
+
+![The form a phone sees first on the hotspot](screenshots/setup-wifi.png)
+
+While the hotspot still uses the published default passphrase, the first page a phone opens on it is this form,
+and nothing else is reachable until a passphrase is chosen. The touch panel and phones on your house WiFi never
+see it.
+
+### Offline
+
+![GET FIRMWARE with no internet](screenshots/offline-get.png)
+
+![The admin page offline: a badge, a note, Download greyed out](screenshots/offline-admin.png)
+
+With no internet, downloads are refused at once with a plain explanation, the saved catalogue is shown marked
+offline, and firmware already on the Pi can still be flashed.

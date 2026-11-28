@@ -50,6 +50,10 @@ USAGE = """usage:
   fm1-switch clock set BPM | start | stop | targets [fm1-a fm1-b ...]
                                 the running router (route run) sends MIDI clock and
                                 start/stop to the targets (none named: every unit)
+  fm1-switch net status|setup|passphrase [NEW|--prompt|--random|--default]|watch|up --yes [--allow-default] [--for SECONDS]|down
+                                the Pi's own WiFi: fall back to a hotspot when no saved network
+                                connects (watch is the service; up is a timed manual test that
+                                puts the saved networks back afterwards)
   fm1-switch set list|show NAME|delete NAME|check NAME [A,B]
   fm1-switch set save NAME A=PACKAGE B=@backup ...   a rig set: one firmware (or the newest
                                 saved image, @backup) per unit, 1-4 units. Pushing a set
@@ -629,6 +633,194 @@ def cmd_route(args: list[str]) -> int:
     return 2
 
 
+def cmd_net(args: list[str]) -> int:
+    """The Pi's own WiFi (docs/ROADMAP-field-network.md). Reads and sets up the hotspot
+    profile, runs the fallback supervisor, and has a timed manual hotspot for testing. It
+    never creates, changes or deletes a saved network."""
+    import signal
+    import threading
+    import time
+
+    from . import config, netctl, netwatch
+
+    usage = ("usage: fm1-switch net status|setup|passphrase [NEW]|watch|"
+             "up --yes [--allow-default] [--for SECONDS]|down")
+    sub, rest = (args[0], args[1:]) if args else ("status", [])
+    iface = str(config.value("net_iface"))
+    def log(m: str) -> None:
+        # The terminal can vanish mid-run (an SSH session that dropped with the WiFi): losing
+        # a log line must never stop the revert that follows.
+        try:
+            print(time.strftime("%H:%M:%S"), m, flush=True)
+        except OSError:
+            # The terminal is gone. Point stdout at nothing so the flush at exit cannot fail too
+            # (that would turn a successful run into exit code 120).
+            sys.stdout = open(os.devnull, "w")
+
+    try:
+        if sub == "status" and not rest:
+            st = netctl.wifi_state(netctl.nmcli, iface)
+            pol = netwatch.Policy.from_config()
+            print(f"adapter {iface}: {'present' if st.present else 'NOT FOUND'}, {st.state}"
+                  + (f", on {st.connection}" if st.connection else ""))
+            print("now: " + ("the Pi's own hotspot" if st.hotspot
+                             else "a saved network" if st.client else "no network"))
+            print(f"saved networks: {', '.join(netctl.saved_networks(netctl.nmcli)) or 'none'}")
+            print(f"hotspot profile: "
+                  f"{'present' if netctl.hotspot_exists(netctl.nmcli) else 'not made yet (net setup)'}"
+                  f", name {config.value('net_ssid')!r}, {config.value('net_band')} GHz "
+                  f"channel {config.value('net_channel')}")
+            print(f"mode {pol.mode}; fallback at boot {'on' if pol.at_boot else 'off'}, "
+                  f"on loss {'on' if pol.on_loss else 'off'}, after {pol.after:g} s; "
+                  f"look again every {pol.retry_every / 60:g} min"
+                  f"{' (only when nobody is joined)' if pol.only_when_empty else ''}")
+            if netctl.is_default_passphrase():
+                pol = str(config.value("net_default_passphrase"))
+                if pol == "refuse":
+                    print("passphrase: STILL THE PUBLISHED DEFAULT, so THE HOTSPOT WILL NOT COME UP "
+                          "(net_default_passphrase is refuse). Change it: fm1-switch net passphrase --prompt")
+                elif pol == "gate":
+                    print("passphrase: still the published default. The hotspot works, and the first phone "
+                          "to open a page is made to choose one. Or choose now: fm1-switch net passphrase --prompt")
+                else:
+                    print("passphrase: STILL THE PUBLISHED DEFAULT (allowed by net_default_passphrase): "
+                          "anyone who has read the docs can join the hotspot")
+            else:
+                print("passphrase: changed from the default (fm1-switch net passphrase shows it)")
+            if st.hotspot:
+                phones = netctl.joined_phones(iface)
+                print(f"phones joined: {'unknown' if phones is None else phones}; "
+                      f"address {netctl.address(netctl.nmcli, iface) or '?'}")
+            fresh = netwatch.status_path().exists() and \
+                time.time() - netwatch.status_path().stat().st_mtime < 30
+            print(f"supervisor: {'running' if fresh else 'not running (fm1-switch net watch)'}")
+            return 0
+        if sub == "setup" and not rest:
+            verb = netctl.ensure_hotspot(
+                netctl.nmcli, iface=iface, ssid=str(config.value("net_ssid")),
+                band=str(config.value("net_band")), channel=int(config.value("net_channel")),
+                psk=netctl.passphrase())
+            print(f"hotspot profile {verb}; nothing was brought up")
+            print(f"name {config.value('net_ssid')}, passphrase {netctl.passphrase()}")
+            if netctl.is_default_passphrase() and str(config.value("net_default_passphrase")) != "allow":
+                print("This is the published default passphrase. "
+                      + ("The hotspot will not come up with it." if str(config.value("net_default_passphrase")) == "refuse"
+                         else "The first phone to open a page will be made to choose one."))
+                if sys.stdin.isatty():
+                    import getpass
+                    first = getpass.getpass("Choose a passphrase now (8-63 characters, empty to skip): ")
+                    if first:
+                        if first != getpass.getpass("Again: "):
+                            raise netctl.NetError("the two entries differ; nothing changed")
+                        netctl.write_passphrase(first)
+                        netctl.ensure_hotspot(
+                            netctl.nmcli, iface=iface, ssid=str(config.value("net_ssid")),
+                            band=str(config.value("net_band")),
+                            channel=int(config.value("net_channel")), psk=first)
+                        print("passphrase set")
+                        return 0
+                print("Change it with `fm1-switch net passphrase --prompt`.")
+            return 0
+        if sub == "passphrase" and len(rest) <= 1:
+            new = None
+            if rest and rest[0] == "--prompt":
+                import getpass
+                first = getpass.getpass("New hotspot passphrase (8-63 characters): ")
+                if first != getpass.getpass("Again: "):
+                    raise netctl.NetError("the two entries differ; nothing changed")
+                new = first
+            elif rest and rest[0] == "--random":
+                new = netctl.random_passphrase()
+            elif rest and rest[0] == "--default":
+                new = netctl.DEFAULT_PASSPHRASE
+            elif rest and not rest[0].startswith("--"):
+                new = rest[0]
+            elif rest:
+                raise netctl.NetError(f"unknown option {rest[0]}")
+            if new is None:
+                print(netctl.passphrase())
+                return 0
+            netctl.write_passphrase(new)
+            if netctl.hotspot_exists(netctl.nmcli):
+                netctl.ensure_hotspot(
+                    netctl.nmcli, iface=iface, ssid=str(config.value("net_ssid")),
+                    band=str(config.value("net_band")),
+                    channel=int(config.value("net_channel")), psk=new)
+            print("passphrase set" + (" (the published default again)" if new == netctl.DEFAULT_PASSPHRASE
+                                       else f": {new}" if rest[0] == "--random" else ""))
+            if new == netctl.DEFAULT_PASSPHRASE:
+                print("The default is public: change it before relying on the hotspot.")
+            return 0
+        if sub == "watch" and not rest:
+            stop = threading.Event()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, lambda *_: stop.set())
+            log(f"watching {iface}")
+            # FM1_NET_INTERVAL speeds the loop up for the synthetic test; nothing else sets it.
+            netwatch.watch(netctl.nmcli, stop, iface=iface, log=log,
+                           interval=float(os.environ.get("FM1_NET_INTERVAL") or 5.0))
+            return 0
+        if sub == "up":
+            secs, yes, allow_default, it = 120, False, False, iter(rest)
+            for flag in it:
+                if flag == "--yes":
+                    yes = True
+                elif flag == "--allow-default":
+                    allow_default = True
+                elif flag == "--for":
+                    secs = int(next(it, "0"))
+                else:
+                    raise netctl.NetError(f"unknown option {flag}")
+            if not 20 <= secs <= 3600:
+                raise netctl.NetError("--for is 20 to 3600 seconds")
+            if not allow_default:
+                netctl.require_changed_passphrase()
+            elif netctl.is_default_passphrase():
+                log("using the published default passphrase for this run only")
+            if not yes:
+                print("This takes the Pi off the saved WiFi (this SSH session will drop) and\n"
+                      f"raises its own network for {secs} s, then puts the saved networks back.\n"
+                      "Run again with --yes, and run it detached so it survives the drop:\n"
+                      "  nohup fm1-switch net up --yes > ~/net-up.log 2>&1 &\n"
+                      "Stop `fm1-switch net watch` first, or it will take the hotspot down\n"
+                      "when nobody is joined.", file=sys.stderr)
+                return 2
+            netctl.ensure_hotspot(
+                netctl.nmcli, iface=iface, ssid=str(config.value("net_ssid")),
+                band=str(config.value("net_band")), channel=int(config.value("net_channel")),
+                psk=netctl.passphrase())
+            # Taking the WiFi off the house network ends the SSH session this runs in, and
+            # the hangup would kill us before the saved network is put back. Ignore it.
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            problem = None
+            try:
+                netctl.hotspot_up(netctl.nmcli)
+                log(f"hotspot {config.value('net_ssid')!r} is up for {secs} s")
+                deadline = time.monotonic() + secs
+                stop = threading.Event()
+                signal.signal(signal.SIGINT, lambda *_: stop.set())
+                while time.monotonic() < deadline and not stop.is_set():
+                    stop.wait(5)
+                    log(f"phones joined: {netctl.joined_phones(iface)}")
+            except netctl.NetError as e:
+                problem = e
+            # If no saved network answers, the hotspot goes back up so the Pi stays reachable, even
+            # with the default passphrase: this run was allowed to use it.
+            restored = netwatch.try_saved(netctl.nmcli, iface, log, allow_default=allow_default)
+            if problem:
+                log(f"error: {problem}")
+            log("saved network restored" if restored else "NO saved network connected")
+            return 0 if restored and not problem else 1
+        if sub == "down" and not rest:
+            netctl.hotspot_down(netctl.nmcli)
+            return 0 if netwatch.try_saved(netctl.nmcli, iface, log) else 1
+    except (netctl.NetError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(usage, file=sys.stderr)
+    return 2
+
+
 def cmd_clock(args: list[str]) -> int:
     """The master clock's settings, from the shell. This only writes ``~/fm1-clock.json``; the
     running router (``route run``) follows it and sends the MIDI. No unit is written to."""
@@ -709,6 +901,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_route(args[1:])
     if cmd == "clock":
         return cmd_clock(args[1:])
+    if cmd == "net":
+        return cmd_net(args[1:])
     if cmd == "set":
         return cmd_set(args[1:])
     if cmd == "asset":

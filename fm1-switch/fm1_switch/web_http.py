@@ -26,6 +26,7 @@ from .security import (_TOKEN_HEADER, Throttle, _host_name, _is_loopback_client,
 from .units import SLOTS, SLOT_LABELS
 from .web_state import (APP, _PKG_CACHE, STATIC_DIR, _catalog_cached, _catalog_meta,
                         _sha256, _stat_key, _ui_build, getlist, update_for)
+from . import netctl, wifi_setup
 from .web_writes import (_log_flash, backup_unit_now, delete_backup, finish_setup_by_id,
                          finish_setup_from_pi, flash_unit_by_id, recent_flashes,
                          restore_unit_by_id, setup_from_pi_possible)
@@ -102,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     # -- request gates (audit §9 SEC-01) -----------------------------------
-    def _gate(self, *, mutation: bool) -> tuple[int, str] | None:
+    def _gate(self, *, mutation: bool, skip_token: bool = False) -> tuple[int, str] | None:
         """The refusal for a request that did not come from this server's own UI, or None
         when it may proceed. GETs get the Host and Origin layers; a POST additionally
         needs an application/json body. Non-browser callers (curl, the test suites) pass:
@@ -125,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
         if THROTTLE.blocked(str(self.client_address[0])):
             return (HTTPStatus.TOO_MANY_REQUESTS,
                     "too many wrong tokens from this address; try again in a few minutes")
-        if not self._token_ok():
+        if not skip_token and not self._token_ok():
             return (HTTPStatus.UNAUTHORIZED,
                     f"this write needs the {_TOKEN_HEADER} header; the panel on the Pi "
                     "needs no token, and the value is printed when the server is bound "
@@ -153,6 +154,29 @@ class Handler(BaseHTTPRequestHandler):
             THROTTLE.miss(ip)
         return good
 
+    # -- first-run hotspot passphrase (wifi_setup.py) ------------------------
+    def _hotspot_gated(self) -> bool:
+        """Is this request from a phone on the hotspot while the passphrase is still the default?
+        Then it may only reach the set-a-passphrase form. Never raises: a failure here must not
+        take the UI down for the panel or the house network."""
+        try:
+            local = self.connection.getsockname()[0]
+            return wifi_setup.gate_active(str(local), str(self.client_address[0]))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _api_wifi_setup(self, body: dict) -> None:
+        try:
+            out = wifi_setup.apply_passphrase(str(body.get("passphrase") or ""))
+        except wifi_setup.Refused as exc:
+            return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except netctl.NetError as exc:
+            return self._error(HTTPStatus.INTERNAL_SERVER_ERROR,
+                               f"could not update the hotspot: {exc}")
+        _log_flash(event="wifi-passphrase",
+                   message="hotspot passphrase changed from the published default")
+        return self._json(out)
+
     # -- routing -----------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
         deny = self._gate(mutation=False)
@@ -161,6 +185,20 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         query = parse_qs(parsed.query)
+
+        gated = self._hotspot_gated()
+        if path == "/setup-wifi":
+            return self._send(200, wifi_setup.page(gated=gated), "text/html; charset=utf-8")
+        if gated:        # a phone on the hotspot with the default passphrase sees only the form
+            if path.startswith("/api/"):
+                return self._error(HTTPStatus.FORBIDDEN,
+                                   "choose a hotspot passphrase first: open /setup-wifi")
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/setup-wifi")
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
 
         # The root is the SAME screen the HDMI panel shows, so a phone or tablet that opens
         # http://<pi>/ gets the touch UI. The hub/library page lives at /expert.
@@ -189,7 +227,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/getlist":
             items = getlist()
             return self._json({"items": items, "attribution": hub.ATTRIBUTION,
-                               "unavailable": _catalog_cached() is None})
+                               "unavailable": _catalog_cached() is None,
+                               "online": hub.online(), "offline_note": hub.OFFLINE_NOTE})
         if path == "/api/register/scan":
             return self._api_register_scan()
         if path == "/api/flashlog":
@@ -227,12 +266,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         # The gates run before the body is read: a refused request costs the attacker
         # nothing but a small answer, and none of its bytes reach the parsers below.
-        deny = self._gate(mutation=True)
+        path = unquote(urlparse(self.path).path)
+        gated = self._hotspot_gated()
+        # A phone on the hotspot has no write token yet: while the passphrase is the default,
+        # choosing one is the single write it may make without it.
+        deny = self._gate(mutation=True, skip_token=gated and path == "/api/wifi/setup")
         if deny:
             return self._error(*deny)
-        path = unquote(urlparse(self.path).path)
+        if gated and path != "/api/wifi/setup":
+            return self._error(HTTPStatus.FORBIDDEN,
+                               "choose a hotspot passphrase first: open /setup-wifi")
         body = self._body_json()
         try:
+            if path == "/api/wifi/setup":
+                return self._api_wifi_setup(body)
             if path == "/api/flash":
                 return self._api_flash(body)
             if path == "/api/restore":
@@ -289,6 +336,9 @@ class Handler(BaseHTTPRequestHandler):
                            package=str(body.get("package") or body.get("backup") or "") or None,
                            message=str(exc))
             return self._error(HTTPStatus.CONFLICT, str(exc))
+        except hub.HubOffline as exc:
+            # Not a fault: the Pi has no internet. 503 with a flag the UIs show as a plain note.
+            return self._json({"error": str(exc), "offline": True}, HTTPStatus.SERVICE_UNAVAILABLE)
         except hub.HubError as exc:
             return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
         return self._error(HTTPStatus.NOT_FOUND, "no such endpoint")

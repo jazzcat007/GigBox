@@ -50,11 +50,14 @@ import hashlib
 import json
 import os
 import re
+import socket
+import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import config
 
@@ -117,6 +120,14 @@ class HubError(Exception):
 
 class HubUnavailable(HubError):
     """No network, and no usable cached catalogue."""
+
+
+#: Said wherever something needs the internet and the Pi has none (for example while it runs its own
+#: hotspot). It names what still works and the way around it.
+OFFLINE_NOTE = ("The Pi is offline (it has no internet connection), so it cannot reach the Firmware Hub. "
+                "Everything already on the Pi still works: firmware in the library can be flashed, backed "
+                "up and restored. To get a new firmware, connect the Pi to a network with internet and try "
+                "again, or copy a .fwsc file onto it from a USB stick with `fm1-switch import`.")
 
 
 @dataclass(frozen=True)
@@ -209,6 +220,8 @@ class Catalog:
     fetched_at: float = 0.0
     #: True when this came from the on-disk cache rather than the network.
     from_cache: bool = False
+    #: True when the cache was served because the Pi is offline, not merely because it is fresh.
+    offline: bool = False
 
     @property
     def age_seconds(self) -> float:
@@ -305,6 +318,84 @@ def parse_catalog(payload: dict, *, fetched_at: float | None = None) -> Catalog:
     )
 
 
+# ---------------------------------------------------------------------------- connectivity
+#
+# Away from home the Pi may run its own hotspot, with no internet behind it. Anything that needs the
+# hub must find that out in a moment, not after the 60 s catalogue timeout or the 180 s download
+# timeout, and must say so in plain words. online() is a cheap, cached check: no default route means
+# offline at once; otherwise the hub host is resolved and connected to with a short deadline.
+
+_ONLINE: dict = {"at": -1e9, "ok": True}
+
+
+def has_default_route() -> bool | None:
+    """True/False from the kernel's routing table, or None where it cannot be read (not Linux)."""
+    try:
+        with open("/proc/net/route", encoding="ascii") as f:
+            rows = f.read().splitlines()[1:]
+    except OSError:
+        return None
+    for row in rows:
+        cols = row.split()
+        if len(cols) >= 4 and cols[1] == "00000000" and int(cols[3], 16) & 1:
+            return True
+    try:                                   # an IPv6-only default route also counts
+        with open("/proc/net/ipv6_route", encoding="ascii") as f:
+            for row in f:
+                cols = row.split()
+                # dest, prefix length, ..., flags (col 8), device (col 9): an up, non-reject default route
+                if (len(cols) >= 10 and cols[0] == "0" * 32 and cols[1] == "00000000"
+                        and int(cols[8], 16) & 0x1 and not int(cols[8], 16) & 0x200
+                        and cols[9] != "lo"):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def _probe(host: str, port: int, timeout: float) -> bool:
+    """Resolve and connect within ``timeout`` seconds. getaddrinfo ignores timeouts, so this runs in a
+    thread that is simply abandoned when the deadline passes."""
+    result: list[bool] = []
+
+    def attempt() -> None:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                result.append(True)
+        except OSError:
+            result.append(False)
+
+    t = threading.Thread(target=attempt, daemon=True)
+    t.start()
+    t.join(timeout + 0.5)
+    return bool(result and result[0])
+
+
+def online(*, force: bool = False) -> bool:
+    """Can this Pi reach the Firmware Hub right now? (A thin wrapper so tests can stub it.)"""
+    return check_online(force=force)
+
+
+def check_online(*, force: bool = False, clock=time.monotonic) -> bool:
+    """The real check, cached for 30 s when yes and 10 s when no. The environment variable
+    FM1_OFFLINE=1 forces "no" (for testing, or a rig that must never call out)."""
+    if os.environ.get("FM1_OFFLINE"):
+        return False
+    now = clock()
+    ttl = 30.0 if _ONLINE["ok"] else 10.0
+    if not force and now - _ONLINE["at"] < ttl:
+        return bool(_ONLINE["ok"])
+    ok = False
+    route = has_default_route()
+    if route is not False:
+        url = urlparse(catalog_url())
+        host = url.hostname or ""
+        port = url.port or (443 if url.scheme == "https" else 80)
+        ok = bool(host) and _probe(host, port, 3.0)
+    _ONLINE["at"], _ONLINE["ok"] = now, ok
+    return ok
+
+
 def load(*, network: bool = True, force: bool = False,
          timeout: float | None = None) -> Catalog:
     """Return the catalogue, from cache when fresh, else from the hub.
@@ -334,6 +425,13 @@ def load(*, network: bool = True, force: bool = False,
             "No cached catalogue and network access is disabled. "
             "Connect to Wi-Fi and refresh, or run `fm1-hub --refresh`."
         )
+
+    if not online():
+        # No internet: do not wait for a timeout. Serve what is saved, or say plainly that nothing is.
+        if cached is not None and cached.entries:
+            cached.offline = True
+            return cached
+        raise HubUnavailable("No saved catalogue yet, and the Pi is offline. " + OFFLINE_NOTE)
 
     if timeout is None:
         timeout = float(config.value("hub_timeout"))
@@ -383,6 +481,10 @@ def max_package_bytes() -> int:
     return int(float(config.value("max_package_mb")) * 1024 * 1024)
 
 
+class HubOffline(HubError):
+    """A download was asked for while the Pi has no internet. The message says what still works."""
+
+
 class PackageDownloadError(HubError):
     """The package could not be fetched or did not match the catalogue."""
 
@@ -424,6 +526,9 @@ def fetch_package(
             f"{entry.name} has no checksum in the catalogue; refusing to install an "
             "unverifiable file (pass allow_unpinned to override)."
         )
+
+    if not online():
+        raise HubOffline(OFFLINE_NOTE)
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = entry.pkg.rsplit("/", 1)[-1] if entry.pkg else f"{entry.id}.fwsc"

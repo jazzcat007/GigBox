@@ -66,6 +66,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("flash", "Flashing and waiting"),
     ("backups", "Backups"),
     ("router", "MIDI router and clock"),
+    ("network", "WiFi and hotspot"),
     ("advanced", "Advanced (runtime files)"),
 )
 
@@ -184,6 +185,38 @@ SPECS: tuple[Spec, ...] = (
     Spec("status_fresh", "float", 3, "Router counts as running for", "router",
          "The router's status file is trusted when newer than this.", min=1, max=60,
          unit="s"),
+    # -- network: the Pi's own WiFi when no saved network connects ---------------------
+    Spec("net_mode", "choice", "auto", "WiFi mode", "network",
+         "Auto: join a saved network, and raise the Pi's own network when none connects. "
+         "Home: never raise it. Field: always run it.", choices=("auto", "home", "field")),
+    Spec("net_fallback_at_boot", "bool", True, "Fall back to the hotspot at boot", "network",
+         "When no saved network connects after boot, raise the Pi's own network."),
+    Spec("net_fallback_on_loss", "bool", True, "Fall back when the link is lost", "network",
+         "When a connected network goes away, raise the Pi's own network."),
+    Spec("net_fallback_after", "float", 60, "Give up on saved networks after", "network",
+         "How long no saved network may be connected before the hotspot comes up.",
+         min=10, max=600, unit="s"),
+    Spec("net_retry_home_every", "float", 5, "Look for saved networks every", "network",
+         "While the hotspot is up because of a fallback. 0 means never. A failed try waits "
+         "twice as long next time, up to an hour.", min=0, max=120, unit="min"),
+    Spec("net_retry_only_when_empty", "bool", True, "Go back only when nobody is joined",
+         "network", "Never drop the hotspot while a phone is connected to it."),
+    Spec("net_default_passphrase", "choice", "gate", "If the hotspot passphrase is still the default",
+         "network",
+         "gate: the hotspot works, but the first phone to open any page is made to choose a passphrase. "
+         "refuse: the hotspot will not come up until it is changed at the Pi. allow: no restriction.",
+         choices=("gate", "refuse", "allow")),
+    Spec("net_ssid", "text", "FM-Pi", "Hotspot name", "network",
+         "The network name phones see (up to 32 letters, digits, space . _ -).",
+         pattern=r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}$"),
+    Spec("net_band", "choice", "2.4", "Hotspot band", "network",
+         "2.4 GHz is what the fm1-radio units can join and reaches furthest; 5 GHz is "
+         "quieter at a venue.", choices=("2.4", "5")),
+    Spec("net_channel", "int", 6, "Hotspot channel", "network",
+         "A fixed channel: 1-11 on 2.4 GHz, 36-165 on 5 GHz.", min=1, max=165),
+    Spec("net_iface", "text", "wlan0", "WiFi adapter", "network",
+         "The adapter that joins networks and runs the hotspot.",
+         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,14}$", restart=True),
     # -- advanced: internal state files ----------------------------------------------------
     Spec("router_active", "path", "~/fm1-router-active.json", "Active-patch file",
          "advanced", "", env="FM1_ROUTER_ACTIVE", restart=True),
@@ -191,6 +224,13 @@ SPECS: tuple[Spec, ...] = (
          "advanced", "", env="FM1_ROUTER_HOLDS", restart=True),
     Spec("router_status", "path", "~/fm1-router-status.json", "Router status file",
          "advanced", "", env="FM1_ROUTER_STATUS", restart=True),
+    Spec("net_key", "path", "~/fm1-hotspot.key", "Hotspot passphrase file",
+         "advanced", "Kept private (mode 0600); never shown on a page.",
+         env="FM1_HOTSPOT_KEY", restart=True, editable=False,
+         why_locked="It holds the hotspot passphrase; set it in the config file or "
+                    "FM1_HOTSPOT_KEY."),
+    Spec("net_status", "path", "~/fm1-net-status.json", "WiFi status file",
+         "advanced", "", env="FM1_NET_STATUS", restart=True),
 )
 
 BY_KEY: dict[str, Spec] = {s.key: s for s in SPECS}

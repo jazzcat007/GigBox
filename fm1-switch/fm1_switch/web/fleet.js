@@ -1659,13 +1659,25 @@ async function renderGet(screen) {
       state.getlist = r.items || [];
       state.getAttribution = r.attribution || "";
       state.getUnavailable = !!r.unavailable;
-    } catch { state.getlist = []; state.getUnavailable = true; }
+      state.getOnline = r.online !== false;
+    } catch { state.getlist = []; state.getUnavailable = true; state.getOnline = true; }
     if (gen !== state.gen) return;
   }
   const items = state.getlist;
   const pages = Math.max(1, Math.ceil(items.length / rowsPer(GPAGE_BASE)));
   state.gpage = Math.max(0, Math.min(state.gpage, pages - 1));
   const list = el("div", { class: "list" });
+  const offline = state.getOnline === false;
+  if (offline) {
+    // Nothing here can be downloaded, so say why and what to do instead, not a list of greyed rows.
+    list.append(
+      el("div", { class: "fwrow", text: "OFFLINE: NO INTERNET, SO NO DOWNLOADS. FIRMWARE ALREADY ON THIS PI CAN STILL BE FLASHED." }),
+      el("div", { class: "fwrow", text: "TO ADD A FIRMWARE WITHOUT INTERNET, COPY A .FWSC FROM A USB STICK: fm1-switch import" }));
+    screen.append(list, el("div", { class: "actions" },
+      el("button", { class: "ghost", text: "BACK", onclick: () => { state.view = "settings"; render(); } })));
+    if (!state.notice && !writing()) status("OFFLINE: CONNECT THE PI TO A NETWORK WITH INTERNET TO DOWNLOAD");
+    return;
+  }
   if (!items.length) list.append(el("div", { class: "fwrow", text: state.getUnavailable ? "THE FIRMWARE LIST IS NOT AVAILABLE (NO CACHED COPY)" : "NOTHING NEW TO FETCH" }));
   for (const e of items.slice(state.gpage * rowsPer(GPAGE_BASE), (state.gpage + 1) * rowsPer(GPAGE_BASE))) {
     list.append(el("button", {
@@ -1682,7 +1694,9 @@ async function renderGet(screen) {
                                onclick: () => { state.gpage--; render(); } }) : null,
     pages > 1 ? el("button", { class: "ghost", text: "›", disabled: state.gpage >= pages - 1,
                                onclick: () => { state.gpage++; render(); } }) : null));
-  if (!state.notice && !writing()) status("TAP A FIRMWARE TO DOWNLOAD IT TO THIS PI");
+  if (!state.notice && !writing()) {
+    status("TAP A FIRMWARE TO DOWNLOAD IT TO THIS PI");
+  }
 }
 
 async function getFirmware(e) {
@@ -1696,7 +1710,9 @@ async function getFirmware(e) {
     result = `${e.name} ${e.version} IS ON THIS PI. FLASH IT FROM A UNIT.`;
     state.getlist = null;
   } catch (err) {
-    result = `DOWNLOAD FAILED: ${err.message}`;
+    result = /offline/i.test(err.message)
+      ? "OFFLINE: CANNOT DOWNLOAD. CONNECT THE PI TO INTERNET, OR FLASH WHAT IS ALREADY ON IT."
+      : `DOWNLOAD FAILED: ${err.message}`;
   }
   state.busy = false;
   state.phase = "";
