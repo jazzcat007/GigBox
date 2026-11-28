@@ -26,7 +26,7 @@ from .security import (_TOKEN_HEADER, Throttle, _host_name, _is_loopback_client,
 from .units import SLOTS, SLOT_LABELS
 from .web_state import (APP, _PKG_CACHE, STATIC_DIR, _catalog_cached, _catalog_meta,
                         _sha256, _stat_key, _ui_build, getlist, update_for)
-from . import netctl, wifi_setup
+from . import clockstate, netctl, wifi_setup
 from .web_writes import (_log_flash, backup_unit_now, delete_backup, finish_setup_by_id,
                          finish_setup_from_pi, flash_unit_by_id, recent_flashes,
                          restore_unit_by_id, setup_from_pi_possible)
@@ -66,6 +66,13 @@ def _json_ready(value):
 
 
 THROTTLE = Throttle()
+
+
+def _clock_view() -> dict:
+    """Is the Pi's clock trustworthy, and what time does it think it is? (clockstate.py)"""
+    st = clockstate.status()
+    return {"trusted": st.trusted, "synchronized": st.synchronized, "set_by_person": st.set_by_person,
+            "reason": st.reason(), "now": st.now}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,6 +172,21 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             return False
 
+    def _api_clock_set(self, body: dict) -> None:
+        """Set the Pi's clock from a phone's time. Guarded in clockstate.set_time."""
+        if str(body.get("confirm") or "") != "clock":
+            raise WriteRefused("confirmation does not match the request")
+        try:
+            out = clockstate.set_time(
+                body.get("epoch"),
+                busy=lambda: "a write is running" if APP.lock.locked() else clockstate.holds_busy())
+        except clockstate.ClockError as exc:
+            raise WriteRefused(str(exc)) from exc
+        if out["changed"]:
+            _log_flash(event="clock-set", message=out["message"], before=int(out["before"]),
+                       after=int(out["after"]))
+        return self._json({"ok": True, **out, "clock": _clock_view()})
+
     def _api_wifi_setup(self, body: dict) -> None:
         try:
             out = wifi_setup.apply_passphrase(str(body.get("passphrase") or ""))
@@ -237,6 +259,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(config.describe())
         if path == "/api/router":
             return self._json(web_router.overview())
+        if path == "/api/clock":
+            return self._json(_clock_view())
         if path == "/api/router/layouts":
             return self._json(web_router.layouts_overview())
         if path == "/api/sets":
@@ -280,6 +304,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/wifi/setup":
                 return self._api_wifi_setup(body)
+            if path == "/api/clock/set":
+                return self._api_clock_set(body)
             if path == "/api/flash":
                 return self._api_flash(body)
             if path == "/api/restore":
@@ -401,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
                          "build": _ui_build()}
             return {**fleet, "busy": APP.busy or ("Working on a unit…" if cached else None),
                     "last_event": APP.last_event, "now": time.time(),
-                    "log_error": APP.log_error}
+                    "log_error": APP.log_error, "clock": _clock_view()}
 
     def _api_fleet_package(self, query: dict) -> None:
         """One package, with its compatibility judged against a given unit's chip."""
@@ -437,6 +463,7 @@ class Handler(BaseHTTPRequestHandler):
             "busy": APP.busy,
             "last_event": APP.last_event,
             "catalog": _catalog_meta(APP.catalog, APP.catalog_error),
+            "clock": _clock_view(),
             "attribution": hub.ATTRIBUTION,
         })
 

@@ -54,6 +54,9 @@ USAGE = """usage:
                                 the Pi's own WiFi: fall back to a hotspot when no saved network
                                 connects (watch is the service; up is a timed manual test that
                                 puts the saved networks back afterwards)
+  fm1-switch time status | set "YYYY-MM-DD HH:MM[:SS]"
+                                is the Pi's clock trustworthy, and set it by hand (the Pi has no battery
+                                clock, so with no internet its date can be wrong)
   fm1-switch set list|show NAME|delete NAME|check NAME [A,B]
   fm1-switch set save NAME A=PACKAGE B=@backup ...   a rig set: one firmware (or the newest
                                 saved image, @backup) per unit, 1-4 units. Pushing a set
@@ -821,6 +824,42 @@ def cmd_net(args: list[str]) -> int:
     return 2
 
 
+def cmd_time(args: list[str]) -> int:
+    """``time status`` / ``time set "YYYY-MM-DD HH:MM[:SS]"``: the Pi's system clock (clockstate.py)."""
+    import time as _time
+
+    from . import clockstate
+
+    usage = 'usage: fm1-switch time status | set "YYYY-MM-DD HH:MM[:SS]"'
+    try:
+        if args == ["status"] or not args:
+            st = clockstate.status(force=True)
+            print(f"now {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(st.now))}: "
+                  f"{'trusted' if st.trusted else 'NOT TRUSTED'} ({st.reason()})")
+            if not st.trusted:
+                print("Audit-log lines written now are marked \"clock\": \"unsynced\". Set it with: "
+                      'fm1-switch time set "YYYY-MM-DD HH:MM", or from a phone on the UI.')
+            return 0
+        if len(args) == 2 and args[0] == "set":
+            when = None
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    when = _time.mktime(_time.strptime(args[1], fmt))
+                    break
+                except ValueError:
+                    continue
+            if when is None:
+                raise clockstate.ClockError("write the time as YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS")
+            out = clockstate.set_time(when, busy=clockstate.holds_busy)
+            print(out["message"])
+            return 0
+    except clockstate.ClockError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(usage, file=sys.stderr)
+    return 2
+
+
 def cmd_clock(args: list[str]) -> int:
     """The master clock's settings, from the shell. This only writes ``~/fm1-clock.json``; the
     running router (``route run``) follows it and sends the MIDI. No unit is written to."""
@@ -903,6 +942,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_clock(args[1:])
     if cmd == "net":
         return cmd_net(args[1:])
+    if cmd == "time":
+        return cmd_time(args[1:])
     if cmd == "set":
         return cmd_set(args[1:])
     if cmd == "asset":

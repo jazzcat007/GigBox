@@ -135,3 +135,10 @@ see it.
 
 With no internet, downloads are refused at once with a plain explanation, the saved catalogue is shown marked
 offline, and firmware already on the Pi can still be flashed.
+
+### The clock
+
+![Setting the Pi's clock from a phone](screenshots/clock-confirm.png)
+
+When the Pi has no internet and its clock may be wrong, the fleet screen shows **PI CLOCK OFF BY ...** with **SET FROM
+THIS PHONE**, and asks you to confirm. See [The clock](GUIDE-wifi-hotspot.md#the-clock-with-no-internet).

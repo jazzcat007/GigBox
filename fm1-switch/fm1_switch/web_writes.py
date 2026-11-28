@@ -12,7 +12,7 @@ import os
 import time
 from pathlib import Path
 
-from . import config, guided, library, maker_install, mflasher, packages, registry
+from . import clockstate, config, guided, library, maker_install, mflasher, packages, registry
 from .backups import backups_dir, prune_auto_backups
 from .guided import WriteFailed, WriteRefused
 from .web_state import APP, _sha256
@@ -66,7 +66,10 @@ def _log_flash(**fields) -> None:
     "it flashed the wrong thing" needs a record of what was actually asked."""
     try:
         with flash_log_path().open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), **fields}) + "\n")
+            line = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), **fields}
+            if not clockstate.status().trusted:     # say so: the date on this line may be wrong
+                line["clock"] = "unsynced"
+            fh.write(json.dumps(line) + "\n")
         APP.log_error = None
     except OSError as exc:
         APP.log_error = f"the audit log could not be written: {exc}"

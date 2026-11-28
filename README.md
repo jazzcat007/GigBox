@@ -154,6 +154,12 @@ one, copy a `.fwsc` from a USB stick with `fm1-switch import`). Verified on a re
 joined phone never dropped, the return, and the first-use form; a bench test you can run yourself is in
 [`docs/BENCH-wifi-fallback.md`](docs/BENCH-wifi-fallback.md).
 
+The Pi has **no battery clock**, so a Pi switched off and started offline believes it is still the moment it shut down.
+It knows when its clock cannot be trusted, marks audit-log lines written then (`"clock": "unsynced"`), and a phone can
+set it: when the clock is untrusted and the phone's time differs, the touch screen offers **SET FROM THIS PHONE**
+(`fm1-switch time status|set` does the same from a shell). See
+[The clock](docs/GUIDE-wifi-hotspot.md#the-clock-with-no-internet).
+
 ## The safety model, in eight lines
 
 1. Never guess which unit. An unknown unit is shown as `?` with its id.

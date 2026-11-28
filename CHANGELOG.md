@@ -13,6 +13,17 @@ It is not yet merged to `main`. The bench verification that remains is in
 
 ### Added
 
+- **GET FIRMWARE on the touch screen no longer loses rows.** The hub's three-line attribution block under the list was not
+  counted when the screen decided how many rows fit, so it pushed rows off a 5-inch panel and made some firmwares
+  impossible to tap. The credit the list's licence asks for is now a short line in the footer
+  ("LIST: THE FIRMWARE HUB, CC BY 4.0"); the full text stays on the admin page.
+- **The Pi's clock when it is offline.** The Pi has no battery clock, so a Pi switched off and started offline believes
+  it is still the moment it shut down. `fm1_switch/clockstate.py` knows whether the clock is trusted (set by the network
+  or by a person since this boot); audit-log lines written while it is not carry `"clock": "unsynced"`; the fleet
+  response carries it, and the touch screen and admin page offer **SET FROM THIS PHONE** when the Pi's clock is
+  untrusted and the phone differs by over two minutes (`POST /api/clock/set`, `fm1-switch time status|set`). Guarded:
+  never over a network-set clock, believable times only, never during a write or router hold, network time always
+  switched back on, logged. The polkit rule gains the two timedate actions. Tests: `tests/test_clockstate.py`.
 - **Things that need the internet fail gracefully when the Pi is offline** (on its own hotspot, or with no
   network). `hub.online()` is a cached connectivity check (no default route, or the hub unreachable within a
   few seconds); with it, the catalogue is served from the saved copy at once, marked offline with its age,

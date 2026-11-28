@@ -1050,7 +1050,10 @@ test("GET FIRMWARE names each maker and shows the hub's attribution; unreachable
   t.nodes.screen.button("GET FIRMWARE…").click();
   await settle();
   assert.ok(t.nodes.screen.button("SLOOP 2.8.5 · by Ada"));
-  assert.match(t.nodes.screen.textContent, /The Firmware Hub/);
+  // The credit is in the footer, short; the screen itself carries only the list and its buttons, so no
+  // long block can push rows off a 5-inch panel.
+  assert.match(t.nodes.status.textContent, /THE FIRMWARE HUB, CC BY 4\.0/);
+  assert.doesNotMatch(t.nodes.screen.textContent, /Firmware Hub/i);
   t.nodes.__getlist = []; t.nodes.__unavail = true;
   await t.run("state.getlist = null; render()");
   await settle();

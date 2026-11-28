@@ -100,6 +100,8 @@ async function loadFleet(quiet = false) {
   state.units = data.units || [];
   state.lastEvent = data.last_event || null;
   state.serverNow = data.now || 0;
+  state.clock = data.clock || null;          // is the Pi's clock trusted? (no internet: it may be wrong)
+  state.clockAt = Date.now();
   state.logError = data.log_error || "";   // the audit log could not be written (SAFE-05)
   state.serverBusy = adoptServerBusy(serverPhase(data));
   state.phase = serverPhase(data);
@@ -115,7 +117,7 @@ async function loadFleet(quiet = false) {
   // rebuild is visible as a flicker (and can swallow a tap). Compare what the screen is
   // drawn from; callers that just changed something (a write, a button) always redraw.
   const sig = JSON.stringify([state.units, state.lastEvent, state.logError, state.phase,
-                              state.packages]);
+                              state.packages, clockSkewText()]);
   if (quiet && sig === state.sig) return;
   state.sig = sig;
   state.compat.clear();               // the library may have changed
@@ -181,9 +183,11 @@ function render() {
   if (writing() && !state.pending) {
     status(progressText());
   } else if (!state.pending && !state.notice && !ROUTE_VIEWS.has(state.view)) {
-    status(!state.units.length ? "PUT A UNIT IN DOWNLOAD MODE, THEN REGISTER IT"
+    status(state.view === "get" ? getStatusText()
+         : !state.units.length ? "PUT A UNIT IN DOWNLOAD MODE, THEN REGISTER IT"
          : state.view === "fleet" ? "TAP A UNIT TO MANAGE IT"
          : state.view === "settings" ? "FIRMWARE IS MANAGED ON THE WEB ADMIN"
+
          : state.view === "unit" && attention(unitById(state.selected) || {}) ? attention(unitById(state.selected))
          : state.pkg ? `SELECTED: ${state.pkg.replace(/\.fwsc$/, "")} — TAP FLASH`
          : "TAP A FIRMWARE, THEN FLASH");
@@ -284,8 +288,40 @@ function stateClass(u) {
   return u.download ? "ready" : u.present || u.running ? "" : "absent";
 }
 
+// The Pi has no battery clock. With no internet its date can be wrong, and a phone knows the right time.
+// Only when the Pi says its clock is untrusted AND this phone disagrees by more than two minutes.
+function clockSkewSeconds() {
+  const c = state.clock;
+  if (!c || c.trusted || !c.now) return 0;
+  const serverNow = c.now + (Date.now() - (state.clockAt || Date.now())) / 1000;
+  const skew = Date.now() / 1000 - serverNow;
+  return Math.abs(skew) > 120 ? skew : 0;
+}
+
+function clockSkewText() {
+  const s = Math.abs(clockSkewSeconds());
+  if (!s) return "";
+  if (s < 5400) return `${Math.round(s / 60)} MIN`;
+  if (s < 172800) return `${Math.round(s / 3600)} HOURS`;
+  return `${Math.round(s / 86400)} DAYS`;
+}
+
+function requestClockSet(opener) {
+  showConfirm({ action: "clock-set", unitId: "clock", label: "Clock" },
+    "SET THE CLOCK FROM THIS PHONE?", "SET CLOCK", opener,
+    el("div", {}, el("b", { text: `The Pi's clock is off by about ${clockSkewText()}` })),
+    el("div", { text: "It has no internet to set it. This phone's time is used. The audit log and backup names carry the date." }),
+    el("div", { class: "warn", text: "Not while a unit is being flashed." }));
+}
+
 function renderFleet(screen) {
   if (state.logError) screen.append(el("div", { class: "fwrow", text: "WARNING: " + state.logError.toUpperCase() }));
+  if (clockSkewText()) {
+    screen.append(el("div", { class: "regbar" },
+      el("span", { class: "state attn", text: `PI CLOCK OFF BY ${clockSkewText()}` }),
+      el("button", { class: "primary", text: "SET FROM THIS PHONE", disabled: writing(),
+                     onclick: (ev) => requestClockSet(ev) })));
+  }
   if (!state.units.length) {
     // First run (audit §7.3: the empty fleet was a dead end that pointed at a SETTINGS
     // screen which could not help). One card that says what to do, with the REGISTER
@@ -859,6 +895,11 @@ async function perform(pend) {
     // The letter in the answer is what the server actually assigned, not what we showed.
     const res = await postJson("/api/register/bind", { unit_id: pend.unitId, confirm });
     return `Unit …${pend.unitId.slice(-4)} is now sticker ${res.label !== undefined ? res.label : pend.letter}. Tap it to name it or flash it.`;
+  }
+  if (pend.action === "clock-set") {
+    const res = await postJson("/api/clock/set", { confirm: "clock", epoch: Math.floor(Date.now() / 1000) });
+    await loadFleet();
+    return (res.message || "done").toUpperCase();
   }
   if (pend.action === "reconcile") {
     const res = await postJson("/api/reconcile", { confirm: "reconcile", all: true });
@@ -1651,6 +1692,13 @@ async function performSets(pend) {
 
 const GPAGE_BASE = 3;
 
+// The footer on the GET FIRMWARE screen. The credit the hub's licence asks for lives here, short, instead of
+// in a block on the screen that pushed the rows off the panel (the full text is on the admin page).
+function getStatusText() {
+  if (state.getOnline === false) return "OFFLINE: CONNECT THE PI TO A NETWORK WITH INTERNET TO DOWNLOAD";
+  return "TAP A FIRMWARE TO DOWNLOAD IT" + (state.getAttribution ? " · LIST: THE FIRMWARE HUB, CC BY 4.0" : "");
+}
+
 async function renderGet(screen) {
   const gen = state.gen;
   if (state.getlist === null) {
@@ -1675,7 +1723,7 @@ async function renderGet(screen) {
       el("div", { class: "fwrow", text: "TO ADD A FIRMWARE WITHOUT INTERNET, COPY A .FWSC FROM A USB STICK: fm1-switch import" }));
     screen.append(list, el("div", { class: "actions" },
       el("button", { class: "ghost", text: "BACK", onclick: () => { state.view = "settings"; render(); } })));
-    if (!state.notice && !writing()) status("OFFLINE: CONNECT THE PI TO A NETWORK WITH INTERNET TO DOWNLOAD");
+    if (!state.notice && !writing()) status(getStatusText());
     return;
   }
   if (!items.length) list.append(el("div", { class: "fwrow", text: state.getUnavailable ? "THE FIRMWARE LIST IS NOT AVAILABLE (NO CACHED COPY)" : "NOTHING NEW TO FETCH" }));
@@ -1687,7 +1735,6 @@ async function renderGet(screen) {
        el("span", { class: "mark unknown", text: e.stars ? `★${e.stars}` : "" })));
   }
   screen.append(list,
-    state.getAttribution ? el("div", { class: "note", text: state.getAttribution }) : null,
     el("div", { class: "actions" },
     el("button", { class: "ghost", text: "BACK", onclick: () => { state.view = "settings"; render(); } }),
     pages > 1 ? el("button", { class: "ghost", text: `‹ ${state.gpage + 1}/${pages}`, disabled: state.gpage === 0,
@@ -1695,7 +1742,10 @@ async function renderGet(screen) {
     pages > 1 ? el("button", { class: "ghost", text: "›", disabled: state.gpage >= pages - 1,
                                onclick: () => { state.gpage++; render(); } }) : null));
   if (!state.notice && !writing()) {
-    status("TAP A FIRMWARE TO DOWNLOAD IT TO THIS PI");
+    // The credit the list's licence asks for goes in the footer, not on the screen: a three-line block under
+    // the list pushed the rows off the panel and made some firmwares impossible to tap. The full text is on
+    // the admin page.
+    status(getStatusText());
   }
 }
 

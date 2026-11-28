@@ -8,7 +8,7 @@ into the next.
 
 import pytest
 
-from fm1_switch import hub, registry
+from fm1_switch import clockstate, hub, registry
 
 
 @pytest.fixture(autouse=True)
@@ -23,3 +23,11 @@ def _online_by_default(monkeypatch):
     """No test may probe the real network: the hub is reachable unless a test says otherwise
     (tests/test_offline.py does, and tests the connectivity check itself)."""
     monkeypatch.setattr(hub, "online", lambda **kw: True)
+
+
+@pytest.fixture(autouse=True)
+def _clock_trusted_by_default(monkeypatch):
+    """The audit log marks lines written on an untrusted clock; tests compare log lines exactly, and a dev
+    machine has no timedatectl, so the clock is trusted unless a test says otherwise."""
+    st = clockstate.Status(synchronized=True, ntp=True, set_by_person=False, now=0.0)
+    monkeypatch.setattr(clockstate, "status", lambda *a, **k: st)

@@ -314,6 +314,32 @@ function renderHubMeta() {
   );
 }
 
+// ---------------------------------------------------------------------------------- clock
+//
+// The Pi has no battery clock: with no internet its date can be wrong. When it says so AND this
+// browser disagrees by more than two minutes, offer to set it from this browser's time.
+
+async function checkClock() {
+  let c;
+  try { c = await api("/api/clock"); } catch { return; }
+  const note = $("#clock-note");
+  const skew = Date.now() / 1000 - c.now;
+  if (c.trusted || Math.abs(skew) <= 120) { note.hidden = true; return; }
+  const mins = Math.round(Math.abs(skew) / 60);
+  const how = mins < 90 ? `${mins} minutes` : mins < 2880 ? `${Math.round(mins / 60)} hours` : `${Math.round(mins / 1440)} days`;
+  note.replaceChildren(
+    el("span", { text: `The Pi's clock is off by about ${how} and it has no internet to set it. ` }),
+    el("button", { text: "Set it from this browser", onclick: async () => {
+      try {
+        const r = await api("/api/clock/set", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: "clock", epoch: Math.floor(Date.now() / 1000) }) });
+        toast(r.message || "Clock set.", "ok");
+        checkClock();
+      } catch (err) { toast(`Clock not set: ${err.message}`, "bad"); }
+    } }));
+  note.hidden = false;
+}
+
 // ------------------------------------------------------------------ boot
 
 async function loadState() {
@@ -646,6 +672,7 @@ $("#search").addEventListener("input", (ev) => {
     await loadLibrary();
     await loadLayout();
     await loadSettings();
+    await checkClock();
   } catch (err) {
     toast(`Startup problem: ${err.message}`, "bad");
   }

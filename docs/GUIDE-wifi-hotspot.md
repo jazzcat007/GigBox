@@ -171,8 +171,47 @@ back). **Get what you need before you go:** download the firmware you might want
 `.fwsc` files onto the Pi with `fm1-switch import` from a USB stick. A rig that should never call out can set
 the environment variable `FM1_OFFLINE=1`.
 
-The Pi has no battery-backed clock, so away from home with no internet its date can be wrong until it is online
-again. The audit log and backup names carry that date, so treat them accordingly (a fix is on the roadmap).
+The Pi's date is covered in [The clock](#the-clock-with-no-internet), below.
+
+## The clock (with no internet)
+
+The Pi has no battery-backed clock. While it is online, the network sets the time. Its normal time service also saves
+the time regularly, so a Pi that stays powered keeps good time offline for days. The problem is a Pi that was
+**switched off and then started offline** (at a gig): it wakes up believing it is still the moment it shut down.
+The audit log, backup names and set names then carry the wrong date.
+
+The Pi never hides this:
+
+- `fm1-switch time status` says whether the clock is trusted: set by the network, or by a person since this boot.
+- Audit-log lines written while it is **not** trusted carry `"clock": "unsynced"`, so you can tell later which dates to
+  doubt.
+- When the Pi's clock is untrusted **and your phone's time differs by more than two minutes**, the touch screen shows
+  **PI CLOCK OFF BY 3 DAYS** with a **SET FROM THIS PHONE** button (and the admin page shows a note with a button).
+
+![Confirming the clock change](screenshots/clock-confirm.png)
+
+Setting it uses the phone's time (a phone on a mobile network knows the right time even when the Pi's WiFi has no
+internet). It is guarded:
+
+- **Never over a clock the network set.** If the network has set the clock, it is not changed by hand.
+- **Only a believable time:** not before 2026 or after 2100, and at least two minutes different from the Pi's.
+- **Never during a write.** The router's holds and the flash lock expire on the clock, so it is not moved while a unit is
+  being flashed or restored.
+- The Pi **switches network time off for a moment, sets the time, and always switches network time back on**, so the
+  network takes over as soon as there is internet again. The change (old time, new time) is written to the audit log.
+- Setting it counts until the next reboot. After a reboot the Pi asks again, because the clock has reset.
+
+From the shell (for a headless Pi): `fm1-switch time status` and `fm1-switch time set "2026-11-28 10:50"`.
+
+**One-time permission.** Setting the clock needs a small extension of the same polkit rule the hotspot uses (two more
+actions, for the `netdev` group). If you installed the rule earlier, install the new copy:
+
+```bash
+sudo cp ~/fm1/fm1-switch/polkit/50-fm1-wifi.rules /etc/polkit-1/rules.d/50-fm1-wifi.rules
+sudo systemctl restart polkit
+```
+
+Without it, setting the clock says "the Pi's user is not allowed to set the time yet" and changes nothing.
 
 ## If something does not work
 

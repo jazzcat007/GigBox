@@ -229,6 +229,9 @@ SPECS: tuple[Spec, ...] = (
          env="FM1_HOTSPOT_KEY", restart=True, editable=False,
          why_locked="It holds the hotspot passphrase; set it in the config file or "
                     "FM1_HOTSPOT_KEY."),
+    Spec("time_set_marker", "path", "~/fm1-time-set.json", "Clock-set marker file",
+         "advanced", "Remembers, for this boot only, that a person set the clock.",
+         env="FM1_TIME_SET", restart=True),
     Spec("net_status", "path", "~/fm1-net-status.json", "WiFi status file",
          "advanced", "", env="FM1_NET_STATUS", restart=True),
 )

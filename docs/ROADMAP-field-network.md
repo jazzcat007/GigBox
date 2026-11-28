@@ -192,16 +192,16 @@ Switching Home to Field drops whatever phone is controlling the Pi over the hous
 
 ### Clock
 
-With no internet and no RTC the Pi boots with the time it last had, or 1970. It matters here:
-
-- The flash log, backup folder names and the sets file carry dates; wrong ones make an audit
-  trail misleading.
-- The router's flash holds expire on wall-clock time. A jump when time is corrected could make a
-  hold expire early or late. (Holds always expire, so a unit is never silenced for ever, but the
-  gap between "set" and "expires" can be wrong.) To check in the code.
-- Fix, cheapest first: install `fake-hwclock` (restores the last saved time at boot, so time never
-  goes backwards); let the phone set the time from the UI when it connects (the browser knows the
-  time); a DS3231 RTC module if the rig is used offline for long.
+**Built (2026-11-28).** `fake-hwclock` turned out to be unnecessary: the Pi's time service already saves the clock
+regularly, so a Pi that stays powered keeps good time. The real gap is a Pi switched off and started offline, which
+believes it is still the moment it shut down. So: the Pi knows whether its clock is trusted (set by the network, or by a
+person since this boot); audit-log lines written while it is not carry `"clock": "unsynced"`; and a phone that opens the
+UI is offered "set the clock from this phone" when the Pi's clock is untrusted and the phone differs by over two
+minutes. Setting it is guarded (never over a network-set clock, a believable time only, never during a write or a router
+hold, network time always switched back on, logged). `fm1-switch time status|set` does the same from a shell. Needs two
+more actions in the polkit rule. Guide: [GUIDE-wifi-hotspot.md](GUIDE-wifi-hotspot.md#the-clock-with-no-internet). Not
+done: making the router's holds and the flash lock immune to any clock jump; they are only protected by refusing to set the
+clock while one is active (a jump by the network itself when it returns is the same hazard as at home).
 
 ### Without internet
 
