@@ -993,7 +993,7 @@ grants exactly `systemctl restart fm1-kiosk.service` and nothing with a wildcard
 
 ### 10.1 Licensing analysis (decision is the owner's)
 
-**The code.** All 28 commits are by the owner, co-authored with Claude **[measured: git log]**. No
+**The code.** All 28 commits are by the owner **[measured: git log]**. No
 third-party code is vendored. The owner can license it freely. **No LICENSE exists, and
 `fleetctl/pyproject.toml` already declares `license = { text = "MIT" }`**. That is an
 inconsistent, unaccompanied declaration and must be reconciled with whatever the owner chooses.
