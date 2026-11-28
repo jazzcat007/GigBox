@@ -43,7 +43,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class Spec:
     key: str
-    kind: str                     # "path" | "int" | "float" | "text" | "url"
+    kind: str                     # "path" | "int" | "float" | "text" | "url" | "bool" | "choice"
     default: Any
     label: str
     group: str
@@ -53,6 +53,7 @@ class Spec:
     max: float | None = None
     unit: str = ""                # shown after a number: "s", "min", "MB"
     pattern: str | None = None    # a text value must match this (name rules)
+    choices: tuple = ()           # kind "choice": the allowed values, as text
     restart: bool = False         # takes effect only after the service restarts
     editable: bool = True         # False: shown, but only the file/env can change it
     why_locked: str = ""          # shown when editable is False
@@ -78,6 +79,13 @@ SPECS: tuple[Spec, ...] = (
     Spec("patch", "text", "default", "Default routing patch", "rig",
          "The patch the MIDI router follows when none has been chosen.",
          env="FM1_PATCH", pattern=_NAME),
+    Spec("auto_reregister", "bool", True, "Re-register units after a power-up", "rig",
+         "When units come back from a power cycle (or the cables moved) and the panel would ask "
+         "to RE-REGISTER FLEET, do it automatically once the bus has settled. The units that "
+         "need it restart, so sound stops for about half a minute."),
+    Spec("auto_reregister_settle", "float", 20, "Wait for the units to settle", "rig",
+         "How long the bus must stay unchanged before the automatic re-register starts, so "
+         "units that power up one at a time are all there.", min=5, max=300, unit="s"),
     Spec("touch_device", "path", "/dev/input/event0", "Touch panel device", "rig",
          "The evdev node of the touchscreen, for the on-panel UI.", restart=True),
     # -- folders and files -------------------------------------------------------------
@@ -217,11 +225,17 @@ def _coerce(spec: Spec, raw: Any) -> Any:
             raise ConfigError(f"{spec.label}: must be {spec.min:g} to {spec.max:g}"
                               f"{' ' + spec.unit if spec.unit else ''}")
         return float(num) if spec.kind == "float" else num
+    if spec.kind == "bool":
+        if not isinstance(raw, bool):
+            raise ConfigError(f"{spec.label}: needs yes or no")
+        return raw
     if not isinstance(raw, str) or not raw.strip():
         raise ConfigError(f"{spec.label}: cannot be empty")
     text = raw.strip()
     if "\0" in text or "\n" in text or len(text) > 400:
         raise ConfigError(f"{spec.label}: not a usable value")
+    if spec.kind == "choice" and text not in spec.choices:
+        raise ConfigError(f"{spec.label}: choose one of {', '.join(spec.choices)}")
     if spec.kind == "url" and not re.match(r"^https?://[^\s/]+", text):
         raise ConfigError(f"{spec.label}: needs an http(s) address")
     if spec.pattern and not re.match(spec.pattern, text):
@@ -298,6 +312,7 @@ def describe() -> dict:
         items.append({
             "key": s.key, "group": s.group, "kind": s.kind, "label": s.label,
             "help": s.help, "unit": s.unit, "min": s.min, "max": s.max,
+            "choices": list(s.choices),
             "value": value(s.key), "default": s.default,
             "in_file": s.key in data, "source": src,
             "env": s.env if src == "env" else None,

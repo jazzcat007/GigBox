@@ -500,6 +500,7 @@ async function loadLayout() {
 const settings = { data: null, edits: {} };
 
 function settingValueText(s, v) {
+  if (s.kind === "bool") return v ? "yes" : "no";
   return s.unit ? `${v} ${s.unit}` : String(v);
 }
 
@@ -525,23 +526,36 @@ function settingRow(s) {
   const lock = !s.editable ? s.why_locked || "Not editable here."
     : s.source === "env" ? `Fixed by the environment variable ${s.env}.` : "";
   const numeric = s.kind === "int" || s.kind === "float";
-  const input = el("input", {
-    id: `set-${s.key}`,
-    type: numeric ? "number" : "text",
-    value: shown === null ? s.default : shown,
-    min: numeric ? s.min : null,
-    max: numeric ? s.max : null,
-    step: s.kind === "int" ? "1" : numeric ? "any" : null,
-    disabled: lock ? "" : null,
-    spellcheck: "false",
-    autocomplete: "off",
-    oninput: (ev) => {
-      const raw = ev.target.value;
-      const val = numeric ? (raw === "" ? raw : Number(raw)) : raw;
-      if (val === s.value) delete settings.edits[s.key]; else settings.edits[s.key] = val;
-      syncSettingsBar();
-    },
-  });
+  const onValue = (val) => {
+    if (val === s.value) delete settings.edits[s.key]; else settings.edits[s.key] = val;
+    syncSettingsBar();
+  };
+  let input;
+  if (s.kind === "bool") {
+    input = el("input", { id: `set-${s.key}`, type: "checkbox", checked: shown ? "" : null,
+      disabled: lock ? "" : null, onchange: (ev) => onValue(ev.target.checked) });
+    if (shown) input.checked = true;
+  } else if (s.kind === "choice") {
+    input = el("select", { id: `set-${s.key}`, disabled: lock ? "" : null,
+      onchange: (ev) => onValue(ev.target.value) },
+      ...s.choices.map((c) => el("option", { value: c, text: c, selected: c === shown ? "" : null })));
+  } else {
+    input = el("input", {
+      id: `set-${s.key}`,
+      type: numeric ? "number" : "text",
+      value: shown === null ? s.default : shown,
+      min: numeric ? s.min : null,
+      max: numeric ? s.max : null,
+      step: s.kind === "int" ? "1" : numeric ? "any" : null,
+      disabled: lock ? "" : null,
+      spellcheck: "false",
+      autocomplete: "off",
+      oninput: (ev) => {
+        const raw = ev.target.value;
+        onValue(numeric ? (raw === "" ? raw : Number(raw)) : raw);
+      },
+    });
+  }
   const badges = [];
   if (s.source === "file") badges.push(el("span", { class: "badge", text: "customised" }));
   if (s.restart) badges.push(el("span", { class: "badge warn", text: "restart to apply" }));
@@ -550,7 +564,7 @@ function settingRow(s) {
     class: "ghost small", text: "Default", title: `Back to ${settingValueText(s, s.default)}`,
     onclick: () => { settings.edits[s.key] = null; renderSettings(); },
   }) : null;
-  if (edited && settings.edits[s.key] === null) input.value = s.default;
+  if (edited && settings.edits[s.key] === null && s.kind !== "bool" && s.kind !== "choice") input.value = s.default;
   return el("div", { class: "srow" },
     el("label", { for: `set-${s.key}`, text: s.label }),
     el("div", { class: "sfield" }, input, s.unit ? el("span", { class: "unit", text: s.unit }) : null, reset),

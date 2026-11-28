@@ -667,6 +667,34 @@ def unproven_runs(reg: Registry, runs: list["RunningUnit"], paired) -> list["Run
     return [r for r, b in paired if _unproven_port_pairing(reg, runs, r, b)]
 
 
+def needs_auto_matching() -> bool:
+    """Would RE-REGISTER FLEET have real work, so that running it unprompted is justified?
+
+    Sysfs only (never ``m-flasher``), so it is safe on a timer. True when a letter rests on an
+    unproven port pairing (look-alike units that re-enumerated, which is every power cycle), or
+    when unplaced running units could be registered letters that are not running (the cables
+    moved). False for a lone new unit with nothing missing: that is REGISTER's job, and
+    restarting a unit nobody owns would be pointless.
+    """
+    reg = load()
+    runs = running()
+    paired = _match_running(reg, runs, set())
+    if unproven_runs(reg, runs, paired):
+        return True
+    placed = {id(r) for r, _ in paired}
+    strays = sum(1 for r in runs if id(r) not in placed)
+    have = {b.slot for _, b in paired}
+    lost = sum(1 for slot in reg.units if slot not in have)
+    return 0 < strays <= lost
+
+
+def running_signature() -> tuple:
+    """What is on the bus right now, as ``((port, usb device number), ...)``. It changes
+    whenever any unit re-enumerates, so "the same signature for a while" means the bus has
+    settled after a power-up."""
+    return tuple(sorted((r.port, r.devnum or "") for r in running()))
+
+
 def unassigned(present: list[LiveUnit] | None = None) -> list[LiveUnit]:
     """Units in download mode that no sticker claims."""
     units = present if present is not None else scan()

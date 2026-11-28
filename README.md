@@ -9,16 +9,29 @@ and the Pi never guesses which unit is which.
 
 ### Screenshots
 
-The touch UI at 800x480, the size of the optional 5-inch panel, captured live from the bench Pi.
-The same pages are served to a phone, which is all you need.
+The touch UI at 800x480, the size of the optional 5-inch panel (the same pages are served to a
+phone, which is all you need), and the admin page, captured live from a real bench. Unit ids are
+shown as `0001` to `0004`, not the real ones. A tour of every screen is in
+[`docs/GUIDE-screens.md`](docs/GUIDE-screens.md).
 
-| Fleet | Rig sets |
+| Fleet | One unit |
 |---|---|
-| ![Fleet: four units, all running](docs/screenshots/fleet.png) | ![Sets: saved rigs and SNAPSHOT](docs/screenshots/sets.png) |
+| ![Fleet: four units, all running](docs/screenshots/fleet.png) | ![A unit: firmware list, FLASH, RESTORE](docs/screenshots/unit.png) |
 
-| Routes | Settings |
+| Rig sets | Routes |
 |---|---|
-| ![Routes: patches, router status, PANIC](docs/screenshots/routes.png) | ![Settings: recent activity, REGISTER, GET FIRMWARE](docs/screenshots/settings.png) |
+| ![Sets: saved rigs and SNAPSHOT](docs/screenshots/sets.png) | ![Routes: router status, patches, CLOCK, PANIC](docs/screenshots/routes.png) |
+
+| A patch | Master clock |
+|---|---|
+| ![A patch: its routes](docs/screenshots/patch.png) | ![The master clock](docs/screenshots/clock.png) |
+
+The admin page (`/index.html`): channel layouts, which map a controller's channels onto each unit so
+nothing on the units needs setting, and the settings.
+
+| Channel layout | Settings |
+|---|---|
+| ![Channel layout](docs/screenshots/admin-layout.png) | ![Settings](docs/screenshots/admin-settings.png) |
 
 A `~` after a unit's letter means it was matched by USB port, not by a readable id (see
 [how it works](#how-it-works)).
@@ -67,8 +80,8 @@ that. The ones you would notice:
 
 | | |
 |---|---|
-| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash; **putting every letter back on the right unit after the cables move** (RE-REGISTER FLEET, 2026-11-27); an Oxi One driving four units through the router with channel layouts (by ear, 2026-11-27) |
-| 🧪 tested with fakes only | registering a new unit — reading its flash id in download mode and binding it to a sticker, from the panel (FEAT-01); visible failure explanations, BACK UP NOW / delete backup, unit names, UPDATE badges, GET FIRMWARE, flash SEVERAL units |
+| ✅ proven on hardware | flash by flash id from the panel; automatic backup before every write; restore from a backup; restart a unit left in download mode; re-learning a unit's fingerprint after a flash; **putting every letter back on the right unit after the cables move** (RE-REGISTER FLEET, 2026-11-27); an Oxi One driving four units through the router with channel layouts (by ear, 2026-11-27); **an UPDATE badge appearing for a unit and the update flashed from the panel** (sloopDX 4.0.1 to 4.0.2 on unit A, with the automatic backup taken first, 2026-11-28) |
+| 🧪 tested with fakes only | registering a new unit — reading its flash id in download mode and binding it to a sticker, from the panel (FEAT-01); visible failure explanations, BACK UP NOW / delete backup, unit names, GET FIRMWARE, flash SEVERAL units |
 | ⚠️ known problems | the panel's held-press and modal-overlap fixes (audit UX-01/02) are code-tested, not yet re-proven on the panel — **do the stylus-hold check before trusting it**; the unguarded CLI `install` write path was removed (SAFE-01) — the panel is the only writer |
 
 ## How it works
@@ -107,7 +120,8 @@ letter say **NOT CONNECTED** while the same units show as **?**, or a letter dra
 It puts the unmatched units into download mode, reads each flash id, matches it to its letter **by
 id**, restarts them and re-learns their ports. It **never writes flash and never gives a new
 letter** (a unit nobody owns is reported, and REGISTER stays deliberate). Sound stops for about half
-a minute while the units restart. Full walk-through, the messages and what to do about each:
+a minute while the units restart. After a plain power cycle it runs by itself once the units have
+settled (a setting turns that off). Full walk-through, the messages and what to do about each:
 [`docs/GUIDE-registering-units.md`](docs/GUIDE-registering-units.md).
 
 ## The safety model, in eight lines

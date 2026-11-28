@@ -13,6 +13,14 @@ It is not yet merged to `main`. The bench verification that remains is in
 
 ### Added
 
+- **Automatic re-register after a power-up.** Turning units off and on re-enumerates all of them,
+  and look-alike units can then only be told apart by port plus USB device number, so the panel
+  asked for RE-REGISTER FLEET after every power cycle. The web server now runs it unprompted
+  (`fm1_switch/autoreg.py`) once the bus has stayed unchanged for 20 s, only for the units that
+  need it, never during a write or with a unit in download mode, at most twice per episode, and
+  not for a lone new unit. Settings: *Re-register units after a power-up* and *Wait for the units
+  to settle*. The result is logged as `auto: matched ...`. Verified on the bench 2026-11-27: after a
+  power cycle it matched A, C and D (B was already proven) with no tap.
 - **Oxi One and channel layouts** (dawless hub). A USB MIDI controller found by name (the Oxi One is
   built in, as `oxi`) can be a route's source or destination; it is left out of the master clock and
   of panic. Routes gain a `shift` (move channels up or down, `route add --shift N`), and **layouts**
@@ -23,6 +31,8 @@ It is not yet merged to `main`. The bench verification that remains is in
   `auto-<layout>`, and makes it active. Works for up to sixteen one-channel units (the unit cap
   went from 8 to 16). Verified on the bench 2026-11-27 with an Oxi One driving four units.
   Guide: `docs/GUIDE-midi-hub.md`.
+- **Screenshots of the touch UI and the admin page, and a tour of the screens**
+  (`docs/GUIDE-screens.md`, `docs/screenshots/`), captured from a real bench with unit ids masked.
 - **Guides for registering units and for the MIDI hub** (`docs/GUIDE-registering-units.md`,
   `docs/GUIDE-midi-hub.md`), including what to do after the USB cables or a hub move.
 - **RE-REGISTER FLEET: put the units back on their profiles after a reconnect.** When the cables move, the

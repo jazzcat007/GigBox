@@ -39,10 +39,12 @@ below are re-exported so ``web.<name>`` keeps working for callers and tests.
 
 from __future__ import annotations
 
+import fcntl
 import os
+import threading
 from http.server import ThreadingHTTPServer
 
-from . import guided, hub, library, mflasher, packages, registration, registry  # noqa: F401 (re-exported)
+from . import autoreg, config, guided, hub, library, mflasher, packages, registration, registry  # noqa: F401 (re-exported)
 from .backups import prune_auto_backups  # noqa: F401 (re-exported)
 from .security import (_LOOPBACK_BINDS, _LOOPBACK_HOSTS, _TOKEN_HEADER, _allowed_hosts,  # noqa: F401
                        _ensure_token, _host_name, _is_loopback_client, _load_token, _origin_host,
@@ -77,6 +79,59 @@ def _harden_umask() -> None:
     os.umask(0o077)
 
 
+def _auto_policy() -> autoreg.Policy:
+    return autoreg.Policy(enabled=bool(config.value("auto_reregister")),
+                          settle=float(config.value("auto_reregister_settle")))
+
+
+def _auto_view() -> autoreg.View:
+    """What the automatic re-register looks at. Sysfs only: nothing here may run ``m-flasher``
+    on a timer. A write in progress, or any unit in download mode, means somebody is working."""
+    if APP.lock.locked() or guided.download_devices():
+        return autoreg.View(False, (), True)
+    return autoreg.View(registry.needs_auto_matching(), registry.running_signature(), False)
+
+
+def _auto_reconcile() -> str:
+    """Run RE-REGISTER FLEET for the units that need it. The touch-panel server and the headless
+    one can both be running, so one lock file lets only one of them do it at a time."""
+    lock_path = flash_log_path().with_name("fm1-autoreg.lock")
+    with open(lock_path, "w") as lf:
+        try:
+            fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "another server is already doing it"
+
+        def phase(text: str) -> None:
+            with APP.state_lock:
+                APP.busy = text
+        try:
+            out = guided.reconcile(lock=APP.lock, on_phase=phase)
+        except (guided.Busy, guided.WriteRefused) as exc:
+            _log_flash(event="reconcile", message=f"auto: not done: {exc}")
+            return f"not done: {exc}"
+        finally:
+            if APP.lock.acquire(blocking=False):
+                with APP.state_lock:
+                    APP.busy = None
+                APP.lock.release()
+        _log_flash(event="reconcile", message="auto: " + out.message,
+                   matched=[s for s, _, _ in out.matched])
+        return out.message
+
+
+def start_auto_reregister() -> threading.Event:
+    """Start the watcher thread (it reads the setting every tick, so turning it on or off
+    needs no restart). Returns the event that stops it."""
+    stop = threading.Event()
+    threading.Thread(
+        target=autoreg.watch, name="auto-reregister", daemon=True,
+        kwargs=dict(stop=stop, policy_fn=_auto_policy, view_fn=_auto_view,
+                    reconcile_fn=_auto_reconcile,
+                    log=lambda m: print(f"[auto re-register] {m}", flush=True))).start()
+    return stop
+
+
 def serve(host: str = "127.0.0.1", port: int = 8080) -> int:
     """Serve the UI. Loopback is the default (SEC-02): the panel and local clients are
     the whole expected audience. Reaching the UI from another machine is an explicit
@@ -96,6 +151,7 @@ def serve(host: str = "127.0.0.1", port: int = 8080) -> int:
               f"the {_TOKEN_HEADER} header. Token: {APP.token}  "
               f"(also at {token_file()}, mode 0600)")
     APP.load_catalog()
+    stop_auto = start_auto_reregister()
     httpd = ThreadingHTTPServer((host, port), Handler)
     print(f"FM-1 fleet UI on http://{host}:{port}/  (Ctrl-C to stop)")
     try:
@@ -103,5 +159,6 @@ def serve(host: str = "127.0.0.1", port: int = 8080) -> int:
     except KeyboardInterrupt:
         print()
     finally:
+        stop_auto.set()
         httpd.server_close()
     return 0

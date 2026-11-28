@@ -69,7 +69,8 @@ unit: use REGISTER for that, not this.
 4. Restarts the units and **re-learns** each one's port, fingerprint and device number. From then
    on the panel can place identical-looking units again.
 
-When it finishes, the panel shows a summary such as `matched A B C D`.
+When it finishes, the panel shows a summary such as `matched A B C D`. After a plain power cycle you
+normally never press it: see *After a power cycle* below.
 
 ### What it will not do
 
@@ -104,6 +105,33 @@ RE-REGISTER FLEET only re-matches letters that already hold an id. A replacement
 flash id, so it counts as a new unit: it is reported as `1 unit(s) with no sticker`, and REGISTER
 offers it the next **free** letter. There is no panel action yet to hand an existing letter to a
 different physical unit. The panel refuses to bind an id that already has a letter, and says which.
+
+## After a power cycle: it happens by itself
+
+Turning units off and on, with no cable moved, looks the same to the Pi as swapping two cables
+while they were off: every unit re-enumerates and gets a new USB device number, and units that look
+alike can only be told apart by port plus that number. So after a power-up the panel would ask for
+RE-REGISTER FLEET every time.
+
+It now does that for you. **A few seconds after the units have all powered up and stopped changing**
+(20 s by default, so units that come up one at a time are all there), the Pi re-registers the
+units that need it, with no tap. Only those units restart, so a unit the Pi can already tell apart on
+its own keeps playing. The result is in the audit log as `auto: matched A C D`.
+
+It is careful about when:
+
+- **Not while anyone is working.** Not during a flash or restore, and not while any unit sits in
+  download mode (it may be there on purpose, or you may be in the middle of REGISTER).
+- **Never in a loop.** At most 2 automatic attempts, 2 minutes apart, per episode. A unit that cannot
+  be matched (not found, no MIDI link) is reported and left alone; the button is still there, and
+  the attempts come back after a minute with nothing wrong.
+- **Not for a new unit.** A lone `?` with no missing letter is a new unit and is left for REGISTER.
+- **Switchable.** Settings, *Re-register units after a power-up* (`auto_reregister`) turns it off,
+  and *Wait for the units to settle* (`auto_reregister_settle`) sets the wait. Both apply at once,
+  with no restart. With it off, the bar and button appear as described above.
+
+Sound still stops for those units for about half a minute while they restart: switch them on
+before you start playing.
 
 ## The same thing from the API
 
